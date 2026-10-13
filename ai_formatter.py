@@ -108,7 +108,11 @@ def sanitize_telegram_html(text: str) -> str:
     text = re.sub(r'\[\s*…\s*\]\.{0,}', '', text)
     text = re.sub(r'&hellip;', '', text)
     text = re.sub(r'\[\s*\.\.\.\s*\]', '', text)
-    text = re.sub(r'\.{3,}', '', text)
+    # Markdown **bold** sintaksisini Telegram HTML <b>bold</b> ga aylantirish
+    text = re.sub(r'<b>\s*\*\*(.*?)\*\*\s*</b>', r'<b>\1</b>', text)
+    text = re.sub(r'\*\*\s*<b>(.*?)</b>\s*\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+
     # Faqat gorizontal bo'shliqlar tozalanadi, qator tashlashlar (\n) saqlanadi!
     text = re.sub(r'[^\S\r\n]+', ' ', text)
     text = re.sub(r'\n{3,}', '\n\n', text)
@@ -383,7 +387,8 @@ QOIDALAR:
 2. HECH QACHON do'kon chegirmalari (deals), aksiyalar, narx arzonlashuvi (Save $..., % off, chegirma) haqida yozma! Agar qurilma haqida bo'lsa, chegirmaga emas, balki QURILMANING O'ZI VA TEXNIK KUCHI, CHIP VA PARAMETRLARIGA e'tibor qarat!
 3. Har doim yangi devayslar (flagman smartfonlar, noutbuklar, konsollar, aqlli qurilmalar), yangi chiplar (Nvidia GPU, AMD/Intel CPU, Apple Silicon, Qualcomm, NPU), sun'iy intellekt modellari, benchmarklar hamda istiqbolli IT va AI startaplarni (investitsiyalar, innovatsion loyihalar) yorit!
 4. HECH QACHON [...] yoki ... yoki chala gap yozma!
-5. Telegram caption limiti 1024 belgi! Jami matn uzunligi 700-850 belgi bo'lsin.
+5. HECH QACHON Markdown yulduzchalaridan (**matn**) foydalanma! Qalin matn uchun faqat <b>matn</b> HTML teglaridan foydalan!
+6. Telegram caption limiti 1024 belgi! Jami matn uzunligi 700-850 belgi bo'lsin.
 """
 
     raw_text = await execute_gemini_prompt(prompt)
