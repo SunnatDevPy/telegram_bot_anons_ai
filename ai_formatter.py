@@ -347,7 +347,7 @@ QAT'IY FORMAT TALABLARI (Har bir bo'lim orasida ALBATTA 2 ta bo'sh qator joy tas
 QOIDALAR:
 1. Bo'limlar bir-biriga yopishib qolmasin, oralarida aniq bo'sh qatorlar bo'lsin.
 2. HECH QACHON do'kon chegirmalari (deals), aksiyalar, narx arzonlashuvi (Save $..., % off, chegirma) haqida yozma! Agar qurilma haqida bo'lsa, chegirmaga emas, balki QURILMANING O'ZI VA TEXNIK KUCHI, CHIP VA PARAMETRLARIGA e'tibor qarat!
-3. Har doim yangi devayslar (flagman smartfonlar, noutbuklar, konsollar, aqlli qurilmalar), yangi chiplar (Nvidia GPU, AMD/Intel CPU, Apple Silicon, Qualcomm, NPU), sun'iy intellekt modellari va benchmarklarni yorit!
+3. Har doim yangi devayslar (flagman smartfonlar, noutbuklar, konsollar, aqlli qurilmalar), yangi chiplar (Nvidia GPU, AMD/Intel CPU, Apple Silicon, Qualcomm, NPU), sun'iy intellekt modellari, benchmarklar hamda istiqbolli IT va AI startaplarni (investitsiyalar, innovatsion loyihalar) yorit!
 4. HECH QACHON [...] yoki ... yoki chala gap yozma!
 5. Telegram caption limiti 1024 belgi! Jami matn uzunligi 700-850 belgi bo'lsin.
 """

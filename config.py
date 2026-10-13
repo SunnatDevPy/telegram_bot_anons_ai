@@ -37,7 +37,7 @@ def render_emoji(key: str, default_char: str) -> str:
         return f'<tg-emoji emoji-id="{eid}">{default_char}</tg-emoji>'
     return default_char
 
-# Sara IT, AI, yangi chiplar va devayslar RSS manbalari (Chegirmasiz, faqat apparat ta'minoti va texnologiya)
+# Sara IT, AI, yangi chiplar, devayslar va startaplar RSS manbalari (Chegirmasiz, apparat ta'minoti, innovatsiyalar va startaplar)
 RSS_SOURCES = [
     {
         "name": "Tom's Hardware",
@@ -50,9 +50,14 @@ RSS_SOURCES = [
         "category": "Flagman Smartfonlar & Yangi Devayslar"
     },
     {
-        "name": "Engadget",
-        "url": "https://www.engadget.com/rss.xml",
-        "category": "Yangi Gadjetlar & Texnologiyalar"
+        "name": "TechCrunch AI",
+        "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
+        "category": "AI Kompaniyalar & Startaplar"
+    },
+    {
+        "name": "TechCrunch Startups",
+        "url": "https://techcrunch.com/category/startups/feed/",
+        "category": "IT & Texno Startaplar"
     },
     {
         "name": "The Decoder",
@@ -60,14 +65,14 @@ RSS_SOURCES = [
         "category": "AI Modellar & Benchmarklar"
     },
     {
-        "name": "TechCrunch AI",
-        "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
-        "category": "AI Kompaniyalar & Texnologiyalar"
+        "name": "Engadget",
+        "url": "https://www.engadget.com/rss.xml",
+        "category": "Yangi Gadjetlar & Texnologiyalar"
     },
     {
         "name": "The Verge",
         "url": "https://www.theverge.com/rss/index.xml",
-        "category": "Yangi Devayslar & IT"
+        "category": "IT & Gadjetlar"
     },
     {
         "name": "Ars Technica",
