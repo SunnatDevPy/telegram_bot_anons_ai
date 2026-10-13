@@ -319,3 +319,32 @@ async def get_top_news(limit: int = 10) -> List[Dict[str, Any]]:
         """, (limit,)) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+async def search_posts(query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """Kalit so'z bo'yicha bazadan yangiliklarni qidirish"""
+    clean_q = query.strip()
+    if not clean_q:
+        return []
+    pattern = f"%{clean_q}%"
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM posts 
+            WHERE status != 'rejected' AND (title LIKE ? OR uz_caption LIKE ? OR original_summary LIKE ?)
+            ORDER BY id DESC LIMIT ?
+        """, (pattern, pattern, pattern, limit)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+async def get_today_published_posts(date_prefix: str, limit: int = 5) -> List[Dict[str, Any]]:
+    """Bugun e'lon qilingan yangiliklarni olish (Dayjest uchun)"""
+    pattern = f"{date_prefix}%"
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM posts 
+            WHERE status = 'published' AND published_at LIKE ?
+            ORDER BY id DESC LIMIT ?
+        """, (pattern, limit)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]

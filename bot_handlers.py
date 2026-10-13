@@ -10,7 +10,7 @@ from aiogram.filters import Command
 
 import config
 import database
-from ai_formatter import regenerate_news, safe_telegram_caption
+from ai_formatter import regenerate_news, safe_telegram_caption, answer_ai_assistant_question
 from media_helper import send_media_robust
 
 router = Router()
@@ -18,6 +18,10 @@ router = Router()
 # Reklama yuborish holatlarini saqlash
 admin_broadcast_state = {}    # {admin_id: "waiting_message"}
 admin_broadcast_pending = {}  # {admin_id: {"chat_id": int, "message_id": int}}
+
+# Foydalanuvchilar qidiruv va AI maslahatchi holatlari
+user_search_state = {}        # {user_id: True}
+user_ai_state = {}            # {user_id: True}
 
 def get_admin_keyboard(mode: str, interval: int) -> InlineKeyboardMarkup:
     """Admin boshqaruv paneli tugmalari (Asosiy harakatlar yashil rangda)"""
@@ -61,6 +65,7 @@ def get_user_reply_keyboard() -> ReplyKeyboardMarkup:
     """Oddiy obunachilar (mijozlar) uchun pastki menyu tugmalari"""
     kb = [
         [KeyboardButton(text="🟢 🔥 Top 10 ta AI Yangilik")],
+        [KeyboardButton(text="🔍 Qidiruv"), KeyboardButton(text="💬 AI Maslahatchi")],
         [KeyboardButton(text="⚡️ Eng so'nggi yangilik"), KeyboardButton(text="📢 Rasmiy Kanalimiz")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
@@ -243,6 +248,59 @@ async def cmd_user_channel(message: Message):
         InlineKeyboardButton(text="Kanalga o'tish ↗", url=config.CHANNEL_LINK)
     ]])
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.message(F.text.in_({"🔍 Qidiruv", "/search"}))
+async def cmd_user_search(message: Message):
+    await database.register_user(message.from_user.id, message.from_user.username, message.from_user.first_name, message.from_user.last_name)
+    user_search_state[message.from_user.id] = True
+    user_ai_state.pop(message.from_user.id, None)
+    text = (
+        "🔍 <b>Yangiliklar ichidan qidirish</b>\n\n"
+        "Qidirayotgan mavzu, brend yoki kalit so'zni yozing:\n"
+        "<i>Masalan: RTX 5090, DeepSeek, Claude, Apple, S25 Ultra, GPT-5</i>"
+    )
+    await message.answer(text, parse_mode="HTML")
+
+@router.message(F.text.in_({"💬 AI Maslahatchi", "/ask", "/ai"}))
+async def cmd_user_ai_assistant(message: Message):
+    await database.register_user(message.from_user.id, message.from_user.username, message.from_user.first_name, message.from_user.last_name)
+    user_ai_state[message.from_user.id] = True
+    user_search_state.pop(message.from_user.id, None)
+    text = (
+        "💬 <b>NeuraTech AI Maslahatchi</b>\n\n"
+        "IT, dasturlash, texnika, chiplar yoki sun'iy intellekt bo'yicha savolingizni yozing:\n"
+        "<i>Masalan: 'Dasturlash uchun qaysi noutbuk yaxshi?', 'Claude 3.7 nima?', 'RTX 5090 ning kuchi qanday?'</i>\n\n"
+        "NeuraTech AI sizga professional va lo'nda tushuntirib beradi ⚡️"
+    )
+    await message.answer(text, parse_mode="HTML")
+
+@router.callback_query(F.data.startswith("ai_ask_inline:"))
+async def cb_ai_ask_inline(call: CallbackQuery):
+    await database.register_user(call.from_user.id, call.from_user.username, call.from_user.first_name, call.from_user.last_name)
+    query = call.data.split(":", 1)[1]
+    await call.answer("NeuraTech AI javob tayyorlamoqda... ⏳")
+    wait_msg = await call.message.answer(f"🧠 <i>'{query}' bo'yicha NeuraTech AI tahlil qilmoqda...</i>", parse_mode="HTML")
+    answer = await answer_ai_assistant_question(query)
+    try:
+        await wait_msg.delete()
+    except Exception:
+        pass
+    reply_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💬 Yana savol berish", callback_data="ai_ask_again")],
+        [InlineKeyboardButton(text=f"📢 {config.CHANNEL_USERNAME}", url=config.CHANNEL_LINK)]
+    ])
+    await call.message.answer(f"🤖 <b>NeuraTech AI:</b>\n\n{answer}", parse_mode="HTML", reply_markup=reply_kb)
+
+@router.callback_query(F.data == "ai_ask_again")
+async def cb_ai_ask_again(call: CallbackQuery):
+    await database.register_user(call.from_user.id, call.from_user.username, call.from_user.first_name, call.from_user.last_name)
+    user_ai_state[call.from_user.id] = True
+    await call.answer()
+    await call.message.answer(
+        "💬 <b>NeuraTech AI Maslahatchi</b>\n\n"
+        "Savolingizni yozib qoldiring:",
+        parse_mode="HTML"
+    )
 
 @router.callback_query(F.data.startswith("user_post:"))
 async def cb_user_post(call: CallbackQuery):
@@ -717,3 +775,103 @@ async def handle_incoming_messages(message: Message, bot: Bot):
             parse_mode="HTML",
             reply_markup=confirm_kb
         )
+        return
+
+    # 2. Agar foydalanuvchi Qidiruv holatida bo'lsa:
+    if user_search_state.get(message.from_user.id):
+        user_search_state.pop(message.from_user.id, None)
+        query = (message.text or "").strip()
+        if not query:
+            await message.answer("Iltimos, matnli kalit so'z yozing.")
+            return
+
+        posts = await database.search_posts(query, limit=5)
+        if posts:
+            lines = [f"🔍 <b>'{query}' bo'yicha topilgan yangiliklar:</b>\n"]
+            kb_rows = []
+            for i, p in enumerate(posts, 1):
+                src = p.get('source_name', 'IT')
+                lines.append(f"{i}️⃣ <b>{p['title']}</b> <i>({src})</i>\n")
+                kb_rows.append([InlineKeyboardButton(text=f"📖 {i}. {p['title'][:40]}...", callback_data=f"user_post:{p['id']}")])
+            
+            kb_rows.append([
+                InlineKeyboardButton(text="💬 AI dan so'rash", callback_data=f"ai_ask_inline:{query[:40]}"),
+                InlineKeyboardButton(text=f"📢 {config.CHANNEL_USERNAME}", url=config.CHANNEL_LINK)
+            ])
+            await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+            return
+        else:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💬 AI Maslahatchidan so'rash", callback_data=f"ai_ask_inline:{query[:40]}")],
+                [InlineKeyboardButton(text=f"📢 {config.CHANNEL_USERNAME} ga a'zo bo'lish", url=config.CHANNEL_LINK)]
+            ])
+            await message.answer(
+                f"🔍 <i>'{query}'</i> mavzusi bo'yicha bazada hozircha yangilik topilmadi.\n\n"
+                "Ushbu savolni <b>NeuraTech AI Maslahatchi</b>ga berishingiz mumkin:",
+                parse_mode="HTML",
+                reply_markup=kb
+            )
+            return
+
+    # 3. Agar foydalanuvchi AI Maslahatchi holatida bo'lsa:
+    if user_ai_state.get(message.from_user.id):
+        user_ai_state.pop(message.from_user.id, None)
+        query = (message.text or "").strip()
+        if not query:
+            await message.answer("Iltimos, savolingizni matn ko'rinishida yozing.")
+            return
+
+        wait_msg = await message.answer("🧠 <i>NeuraTech AI javob tayyorlamoqda...</i>", parse_mode="HTML")
+        answer = await answer_ai_assistant_question(query)
+        try:
+            await wait_msg.delete()
+        except Exception:
+            pass
+
+        reply_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💬 Yana savol berish", callback_data="ai_ask_again")],
+            [InlineKeyboardButton(text=f"📢 {config.CHANNEL_USERNAME}", url=config.CHANNEL_LINK)]
+        ])
+        await message.answer(
+            f"🤖 <b>NeuraTech AI:</b>\n\n{answer}",
+            parse_mode="HTML",
+            reply_markup=reply_kb
+        )
+        return
+
+    # 4. Oddiy matn kelsa (foydalanuvchi to'g'ridan-to'g'ri so'z yoki savol yozsa):
+    if message.text and len(message.text.strip()) >= 2:
+        query = message.text.strip()
+        # Avval bazadan qidirib ko'ramiz
+        posts = await database.search_posts(query, limit=3)
+        if posts:
+            lines = [f"🔍 <b>'{query}' bo'yicha topilgan xabarlar:</b>\n"]
+            kb_rows = []
+            for i, p in enumerate(posts, 1):
+                src = p.get('source_name', 'IT')
+                lines.append(f"{i}️⃣ <b>{p['title']}</b> <i>({src})</i>\n")
+                kb_rows.append([InlineKeyboardButton(text=f"📖 {i}. {p['title'][:40]}...", callback_data=f"user_post:{p['id']}")])
+            kb_rows.append([
+                InlineKeyboardButton(text="💬 AI Maslahatchidan so'rash", callback_data=f"ai_ask_inline:{query[:40]}")
+            ])
+            await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+            return
+
+        # Agar qidiruvdan chiqmasa va savolga o'xshasa (yoki 8+ belgi bo'lsa)
+        if "?" in query or len(query) >= 8:
+            wait_msg = await message.answer("🧠 <i>NeuraTech AI tahlil qilmoqda...</i>", parse_mode="HTML")
+            answer = await answer_ai_assistant_question(query)
+            try:
+                await wait_msg.delete()
+            except Exception:
+                pass
+            reply_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="💬 Yana savol berish", callback_data="ai_ask_again")],
+                [InlineKeyboardButton(text=f"📢 {config.CHANNEL_USERNAME}", url=config.CHANNEL_LINK)]
+            ])
+            await message.answer(
+                f"🤖 <b>NeuraTech AI:</b>\n\n{answer}",
+                parse_mode="HTML",
+                reply_markup=reply_kb
+            )
+            return

@@ -7,15 +7,50 @@ import httpx
 from google import genai
 import config
 
+def get_all_clients() -> list:
+    """Barcha mavjud API kalitlar uchun mijozlar ro'yxatini shakllantirish (Multi-Key Pool)"""
+    keys = config.get_gemini_api_keys()
+    clients = []
+    for k in keys:
+        try:
+            clients.append(genai.Client(api_key=k))
+        except Exception as e:
+            print(f"[Gemini Client Init Xatolik]: {e}")
+    return clients
+
 def get_gemini_client() -> Optional[genai.Client]:
-    api_key = config.GEMINI_API_KEY
-    if not api_key:
+    clients = get_all_clients()
+    return clients[0] if clients else None
+
+async def execute_gemini_prompt(prompt: str) -> Optional[str]:
+    """Barcha kalitlar va barcha modellar bo'ylab xavfsiz so'rov yuborish (Multi-Key & Multi-Model Pool)"""
+    candidate_models = [
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-3-flash",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-flash-latest"
+    ]
+    clients = get_all_clients()
+    if not clients:
         return None
-    try:
-        return genai.Client(api_key=api_key)
-    except Exception as e:
-        print(f"[Gemini Client Xatolik]: {e}")
-        return None
+
+    # Har bir API kalit bo'yicha ketma-ket urinish
+    for client in clients:
+        for model_name in candidate_models:
+            try:
+                response = await asyncio.to_thread(
+                    client.models.generate_content,
+                    model=model_name,
+                    contents=prompt
+                )
+                if response and response.text:
+                    return response.text
+            except Exception as e:
+                # 429 (rate limit / quota) yoki 503 bo'lsa, keyingi model yoki keyingi kalitga o'tish
+                continue
+    return None
 
 def clean_ugly_symbols(text: str) -> str:
     """Xom HTML teglar, [...] belgilari va RSS qoldiqlarini tozalash (qatorlarni saqlagan holda)"""
@@ -352,38 +387,17 @@ QOIDALAR:
 5. Telegram caption limiti 1024 belgi! Jami matn uzunligi 700-850 belgi bo'lsin.
 """
 
-    if client:
-        candidate_models = [
-            "gemini-3.8-flash",
-            "gemini-3.6-flash",
-            "gemini-3-flash",
-            "gemini-2.5-flash",
-            "gemini-2.5-flash-lite",
-            "gemini-flash-latest"
-        ]
-        for model_name in candidate_models:
-            try:
-                response = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model=model_name,
-                    contents=prompt
-                )
-                if response and response.text:
-                    cleaned = sanitize_telegram_html(response.text)
-                    cleaned = fix_blockquote_tags(cleaned)
-                    cleaned = format_paragraph_spacing(cleaned)
-                    return apply_premium_emojis(cleaned)
-            except Exception as e:
-                continue
+    raw_text = await execute_gemini_prompt(prompt)
+    if raw_text:
+        cleaned = sanitize_telegram_html(raw_text)
+        cleaned = fix_blockquote_tags(cleaned)
+        cleaned = format_paragraph_spacing(cleaned)
+        return apply_premium_emojis(cleaned)
 
     return await fallback_formatter(title, summary, source_name, original_url)
 
 async def regenerate_news(title: str, summary: str, current_caption: str) -> str:
-    """Matnni qayta generatsiya qilish"""
-    client = get_gemini_client()
-    if not client:
-        return current_caption
-
+    """Matnni qayta generatsiya qilish (Multi-Key Pool yordamida)"""
     prompt = f"""Ushbu xabarni yanada ixchamroq, qisqa tezislar bilan, bo'limlar orasida 2 ta bo'sh qator tashlab, ochiluvchi sitata (<blockquote expandable>) formatida o'zbek tilida qayta yoz:
 Sarlavha: {title}
 Matn: {summary}
@@ -403,26 +417,88 @@ Format:
 
 [...] belgilarisiz, 600 belgi atrofida.
 """
-    candidate_models = [
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
-        "gemini-3-flash",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-flash-latest"
-    ]
-    for model_name in candidate_models:
-        try:
-            response = await asyncio.to_thread(
-                client.models.generate_content,
-                model=model_name,
-                contents=prompt
-            )
-            if response and response.text:
-                cleaned = sanitize_telegram_html(response.text)
-                cleaned = fix_blockquote_tags(cleaned)
-                cleaned = format_paragraph_spacing(cleaned)
-                return apply_premium_emojis(cleaned)
-        except Exception:
-            continue
+    raw_text = await execute_gemini_prompt(prompt)
+    if raw_text:
+        cleaned = sanitize_telegram_html(raw_text)
+        cleaned = fix_blockquote_tags(cleaned)
+        cleaned = format_paragraph_spacing(cleaned)
+        return apply_premium_emojis(cleaned)
     return current_caption
+
+async def generate_daily_digest(posts: list) -> str:
+    """Kunlik eng sara 5 ta yangilik dayjestini tayyorlash"""
+    if not posts:
+        return ""
+
+    articles_text = ""
+    for idx, p in enumerate(posts[:5], 1):
+        articles_text += f"{idx}. {p['title']}\nManba: {p.get('source_name', '')}\nQisqacha: {p.get('original_summary', '')[:160]}\n\n"
+
+    prompt = f"""Sen — "{config.CHANNEL_USERNAME}" Telegram kanali uchun yetakchi IT va AI tahlilchisisan.
+Bugun kanalda e'lon qilingan eng muhim yangiliklar asosida kechki "NeuraTech Dayjesti" postini o'zbek tilida tayyorla.
+
+Bugungi maqolalar:
+{articles_text}
+
+QAT'IY FORMAT TALABI:
+⚡️ <b>NEURATECH DAYJEST | Kunning eng muhim 5 ta texno voqeasi</b>
+
+📌 <b>Qisqacha:</b>
+Bugun IT, sun'iy intellekt, chiplar va gadjetlar olamida sodir bo'lgan eng qaynoq voqealar jamlanmasi:
+
+<blockquote expandable>📊 <b>Kunning asosiy anonslari:</b>
+1. <b>(1-mavzu nomi)</b> — (1 jumla bilan mazmuni)
+
+2. <b>(2-mavzu nomi)</b> — (1 jumla bilan mazmuni)
+
+3. <b>(3-mavzu nomi)</b> — (1 jumla bilan mazmuni)
+
+4. <b>(4-mavzu nomi)</b> — (1 jumla bilan mazmuni)
+
+5. <b>(5-mavzu nomi)</b> — (1 jumla bilan mazmuni)
+
+💡 <b>Xulosa:</b>
+(1 ta umumlashtiruvchi jumla).</blockquote>
+
+🏷 #NeuraTech #Dayjest #AI #Texnologiya #Yangiliklar
+
+QOIDALAR:
+1. Telegram caption limiti 1024 belgi!
+2. Har bir punkt orasida 2 ta bo'sh qator bo'lsin.
+3. [...] yoki chala jumlalar bo'lmasin.
+"""
+    raw = await execute_gemini_prompt(prompt)
+    if raw:
+        cleaned = sanitize_telegram_html(raw)
+        cleaned = fix_blockquote_tags(cleaned)
+        cleaned = format_paragraph_spacing(cleaned)
+        return apply_premium_emojis(cleaned)
+
+    # Zaxira formatlash
+    lines = [
+        "⚡️ <b>NEURATECH DAYJEST | Kunning eng muhim texno anonslari</b>\n\n",
+        "📌 <b>Bugun sodir bo'lgan asosiy voqealar:</b>\n\n",
+        "<blockquote expandable>📊 <b>Kunning sara xabarlari:</b>\n"
+    ]
+    for idx, p in enumerate(posts[:5], 1):
+        lines.append(f"{idx}. <b>{html.escape(p['title'][:80])}</b> ({html.escape(p.get('source_name', ''))})\n\n")
+    lines.append("</blockquote>\n\n🏷 #NeuraTech #Dayjest #AI #IT")
+    return apply_premium_emojis("".join(lines))
+
+async def answer_ai_assistant_question(question: str) -> str:
+    """Foydalanuvchilarning savollariga NeuraTech AI sifatida o'zbek tilida javob berish"""
+    prompt = f"""Sen — "{config.CHANNEL_USERNAME}" botining intellektual Sun'iy Intellekt maslahatchisisan (NeuraTech AI).
+Foydalanuvchi quyidagi savolni yo'lladi:
+"{question}"
+
+QOIDALAR:
+1. O'zbek tilida juda samimiy, aniq, lo'nda va professional tarzda javob ber.
+2. Savol IT, sun'iy intellekt, gadjetlar, noutbuklar, dasturlash yoki texnologiyaga oid bo'lsa, eng so'nggi ma'lumotlar bilan tavsiya ber.
+3. Javob juda uzun bo'lmasin (maksimal 2-3 ta qisqa abzas, 500-750 belgi).
+4. Telegram HTML teglaridan (<b>, <i>, <code>) to'g'ri foydalan.
+"""
+    raw = await execute_gemini_prompt(prompt)
+    if raw:
+        cleaned = sanitize_telegram_html(raw)
+        return apply_premium_emojis(cleaned)
+    return "Kechirasiz, ayni paytda AI serverlarida yuklama yuqori. Iltimos, birozdan so'ng qayta urinib ko'ring yoki savolingizni boshqacharoq shaklda bering."

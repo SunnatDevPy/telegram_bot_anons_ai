@@ -2,13 +2,35 @@ import os
 from pathlib import Path
 from dotenv import load_dotenv
 
+from datetime import timezone, timedelta
+
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+
+# Toshkent vaqt mintaqasi (UTC+5)
+TASHKENT_TZ = timezone(timedelta(hours=5))
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 CHANNEL_ID = os.getenv("CHANNEL_ID", "-1002229527376").strip()
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@grand_mobile_anons").strip()
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}").strip()
+
+# Gemini API kalitlari hovuzi (Multi-Key Pool)
+def get_gemini_api_keys() -> list:
+    keys = []
+    main_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if main_key and main_key not in keys:
+        keys.append(main_key)
+    for i in range(1, 15):
+        k = os.getenv(f"GEMINI_API_KEY_{i}", "").strip()
+        if k and k not in keys:
+            keys.append(k)
+    raw_keys = os.getenv("GEMINI_API_KEYS", "")
+    for k in raw_keys.split(","):
+        k = k.strip()
+        if k and k not in keys:
+            keys.append(k)
+    return keys
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
 
@@ -18,6 +40,16 @@ INITIAL_ADMIN_ID = int(raw_admin_id) if raw_admin_id.isdigit() else None
 CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "25"))
 DEFAULT_MODE = os.getenv("DEFAULT_MODE", "moderation").strip().lower()
 
+# Tungi tinchlik rejimi (Toshkent vaqti bilan 23:30 dan 07:30 gacha)
+NIGHT_MODE_START_HOUR = 23
+NIGHT_MODE_START_MINUTE = 30
+NIGHT_MODE_END_HOUR = 7
+NIGHT_MODE_END_MINUTE = 30
+
+# Kechki Dayjest vaqti (Toshkent vaqti bilan soat 21:00)
+DAILY_DIGEST_HOUR = 21
+
+LOGO_PATH = BASE_DIR / "neuratech_logo.jpg"
 DB_PATH = BASE_DIR / "bot_data.db"
 
 # Telegram Premium Custom Emoji ID lari
