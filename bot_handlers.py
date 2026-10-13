@@ -23,6 +23,64 @@ admin_broadcast_pending = {}  # {admin_id: {"chat_id": int, "message_id": int}}
 user_search_state = {}        # {user_id: True}
 user_ai_state = {}            # {user_id: True}
 
+# Admin Premium Emoji sozlash holati: {admin_id: "lightning"}
+admin_emoji_edit_state = {}
+
+EMOJI_METADATA = {
+    "lightning": {"name": "Sarlavha (Chaqmoq)", "default": "⚡️"},
+    "pin": {"name": "Mohiyati", "default": "📌"},
+    "chart": {"name": "Tafsilotlar", "default": "📊"},
+    "bulb": {"name": "Xulosa", "default": "💡"},
+    "antenna": {"name": "Manba", "default": "📡"},
+    "tag": {"name": "Hashtag", "default": "🏷"},
+}
+
+def render_emojis_panel_text() -> str:
+    """Premium Emojilar boshqaruv paneli matni"""
+    lines = [
+        "✨ <b>Telegram Premium Custom Emoji Boshqaruvi</b>\n",
+        "Kanal postlaridagi bo'limlar uchun o'zingizning animatsiyali Premium emojilaringizni o'rnatishingiz mumkin.\n",
+        "📋 <b>Hozirgi holat:</b>"
+    ]
+    for key, meta in EMOJI_METADATA.items():
+        eid = config.PREMIUM_EMOJIS.get(key, "").strip()
+        if eid and eid.isdigit():
+            preview = f'<tg-emoji emoji-id="{eid}">{meta["default"]}</tg-emoji>'
+            lines.append(f"• {preview} <b>{meta['name']}:</b> <code>{eid}</code>")
+        else:
+            lines.append(f"• {meta['default']} <b>{meta['name']}:</b> Standart {meta['default']}")
+
+    lines.append(
+        "\n💡 <b>Qanday qilib Premium Emoji ID olish mumkin?</b>\n"
+        "1. Shunchaki botga o'zingiz xohlagan <b>Premium Emojini</b> xabar qilib yuboring — bot darhol uning <b>ID raqami</b> va <b>linkini</b> aniqlaydi hamda 1 ta tugma bilan kerakli bo'limga biriktiradi!\n"
+        "2. Yoki pastdagi tugmalar orqali ID raqamini qo'lda yozing."
+    )
+    return "\n".join(lines)
+
+def get_emojis_keyboard() -> InlineKeyboardMarkup:
+    """Premium Emojilar menyusi tugmalari"""
+    kb = [
+        [
+            InlineKeyboardButton(text="⚡️ Chaqmoq", callback_data="edit_emoji:lightning"),
+            InlineKeyboardButton(text="📌 Mohiyati", callback_data="edit_emoji:pin"),
+        ],
+        [
+            InlineKeyboardButton(text="📊 Tafsilotlar", callback_data="edit_emoji:chart"),
+            InlineKeyboardButton(text="💡 Xulosa", callback_data="edit_emoji:bulb"),
+        ],
+        [
+            InlineKeyboardButton(text="📡 Manba", callback_data="edit_emoji:antenna"),
+            InlineKeyboardButton(text="🏷 Hashtag", callback_data="edit_emoji:tag"),
+        ],
+        [
+            InlineKeyboardButton(text="🔄 Barchasini standartga qaytarish", callback_data="reset_all_emojis")
+        ],
+        [
+            InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
 def get_admin_keyboard(mode: str, interval: int) -> InlineKeyboardMarkup:
     """Admin boshqaruv paneli tugmalari (Asosiy harakatlar yashil rangda)"""
     mode_btn_text = "🟢 Rejim: Avtomatik (Faol)" if mode == "auto" else "🟡 Rejim: Moderatsiya (Tasdiqlash)"
@@ -34,6 +92,9 @@ def get_admin_keyboard(mode: str, interval: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="⏱ 15 min", callback_data="set_interval:15"),
             InlineKeyboardButton(text="⏱ 30 min", callback_data="set_interval:30"),
             InlineKeyboardButton(text="⏱ 60 min", callback_data="set_interval:60"),
+        ],
+        [
+            InlineKeyboardButton(text="✨ Premium Emojilarni sozlash", callback_data="admin_emojis_menu")
         ],
         [
             InlineKeyboardButton(text="🟢 📢 Reklama (Broadcast) yuborish", callback_data="start_broadcast")
@@ -544,6 +605,128 @@ async def cb_refresh_panel(call: CallbackQuery):
         pass
     await call.answer("Yangilandi ✅")
 
+# ==================== PREMIUM EMOJI BOSHQARUVI ====================
+
+@router.message(Command("emojis", "emoji"))
+async def cmd_emojis(message: Message):
+    if not await check_is_admin(message.from_user.id):
+        return
+    text = render_emojis_panel_text()
+    await message.answer(text, parse_mode="HTML", reply_markup=get_emojis_keyboard())
+
+@router.callback_query(F.data == "admin_emojis_menu")
+async def cb_admin_emojis_menu(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+    text = render_emojis_panel_text()
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_emojis_keyboard())
+    await call.answer()
+
+@router.callback_query(F.data.startswith("edit_emoji:"))
+async def cb_edit_emoji(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    key = call.data.split(":")[1]
+    meta = EMOJI_METADATA.get(key, {"name": key, "default": "✨"})
+    admin_emoji_edit_state[call.from_user.id] = key
+
+    current_id = config.PREMIUM_EMOJIS.get(key, "").strip()
+    status_str = f"ID: <code>{current_id}</code>" if current_id else f"Standart {meta['default']}"
+
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=f"🔄 Standart {meta['default']} ga qaytarish", callback_data=f"reset_emoji:{key}")],
+        [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_emojis_menu")]
+    ])
+
+    text = (
+        f"✨ <b>{meta['name']} uchun Premium Emoji sozlash</b>\n\n"
+        f"Hozirgi holat: {status_str}\n\n"
+        "<b>Qanday o'rnatish mumkin:</b>\n"
+        "1. Shunchaki menga o'zingiz xohlagan <b>Premium Emojini</b> (stiker/emoji panelingizdan) yuboring.\n"
+        "2. Yoki uning raqamli <b>Custom Emoji ID</b> sini yozib yuboring (masalan: <code>5368324170671202288</code>).\n"
+        "3. Standart emojiga qaytarish uchun <code>0</code> yoki <code>reset</code> deb yozing.\n\n"
+        "<i>Bekor qilish uchun pastdagi tugmani bosing yoki /cancel deb yozing.</i>"
+    )
+    await call.message.answer(text, parse_mode="HTML", reply_markup=cancel_kb)
+    await call.answer()
+
+@router.callback_query(F.data.startswith("set_emoji_id:"))
+async def cb_set_emoji_id(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    parts = call.data.split(":")
+    key = parts[1]
+    eid = parts[2]
+    meta = EMOJI_METADATA.get(key, {"name": key, "default": "✨"})
+
+    await database.set_setting(f"emoji_{key}", eid)
+    config.PREMIUM_EMOJIS[key] = eid
+
+    await call.answer("Muvaffaqiyatli saqlandi! ✅", show_alert=False)
+
+    confirm_text = (
+        f"✅ <b>{meta['name']}</b> uchun Premium Emoji saqlandi!\n\n"
+        f"🆔 <b>Emoji ID:</b> <code>{eid}</code>\n"
+        f"Ko'rinishi: <tg-emoji emoji-id=\"{eid}\">{meta['default']}</tg-emoji>\n\n"
+        "Endi ushbu bo'limdagi barcha yangiliklar ushbu premium emoji bilan e'lon qilinadi."
+    )
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="✨ Emojilar menyusiga qaytish", callback_data="admin_emojis_menu")
+    ]])
+    try:
+        await call.message.edit_text(confirm_text, parse_mode="HTML", reply_markup=back_kb)
+    except Exception:
+        await call.message.answer(confirm_text, parse_mode="HTML", reply_markup=back_kb)
+
+@router.callback_query(F.data.startswith("reset_emoji:"))
+async def cb_reset_emoji(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    key = call.data.split(":")[1]
+    meta = EMOJI_METADATA.get(key, {"name": key, "default": "✨"})
+    await database.set_setting(f"emoji_{key}", "")
+    config.PREMIUM_EMOJIS[key] = ""
+    admin_emoji_edit_state.pop(call.from_user.id, None)
+
+    await call.answer(f"{meta['name']} standart holatga qaytarildi ✅")
+    text = render_emojis_panel_text()
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_emojis_keyboard())
+    except Exception:
+        await call.message.answer(text, parse_mode="HTML", reply_markup=get_emojis_keyboard())
+
+@router.callback_query(F.data == "reset_all_emojis")
+async def cb_reset_all_emojis(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    for key in EMOJI_METADATA.keys():
+        await database.set_setting(f"emoji_{key}", "")
+        config.PREMIUM_EMOJIS[key] = ""
+
+    await call.answer("Barcha emojilar standartga qaytarildi ✅", show_alert=True)
+    text = render_emojis_panel_text()
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_emojis_keyboard())
+    except Exception:
+        pass
+
+@router.callback_query(F.data == "delete_message")
+async def cb_delete_message(call: CallbackQuery):
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+    await call.answer()
+
 # ==================== MODERATSIYA TUGMALARI ====================
 
 @router.callback_query(F.data.startswith("pub:"))
@@ -739,7 +922,17 @@ async def handle_incoming_messages(message: Message, bot: Bot):
     )
 
     admin_id = message.from_user.id
-    # Agar admin reklama yuborish holatida bo'lsa:
+    is_admin = await check_is_admin(admin_id)
+
+    # Maxsus Telegram Premium Custom Emoji entitiylarini qidirish
+    custom_emojis = []
+    if message.entities:
+        for ent in message.entities:
+            if ent.type == "custom_emoji" and ent.custom_emoji_id:
+                if ent.custom_emoji_id not in custom_emojis:
+                    custom_emojis.append(ent.custom_emoji_id)
+
+    # 1. Agar admin reklama yuborish holatida bo'lsa:
     if admin_broadcast_state.get(admin_id) == "waiting_message":
         if message.text and message.text.strip().lower() in ["/cancel", "bekor qilish"]:
             admin_broadcast_state.pop(admin_id, None)
@@ -777,7 +970,86 @@ async def handle_incoming_messages(message: Message, bot: Bot):
         )
         return
 
-    # 2. Agar foydalanuvchi Qidiruv holatida bo'lsa:
+    # 2. Agar admin Premium Emoji sozlash holatida bo'lsa:
+    if is_admin and admin_id in admin_emoji_edit_state:
+        if message.text and message.text.strip().lower() in ["/cancel", "bekor qilish"]:
+            admin_emoji_edit_state.pop(admin_id, None)
+            await message.answer("❌ Emoji sozlash bekor qilindi.")
+            return
+
+        target_key = admin_emoji_edit_state.pop(admin_id)
+        meta = EMOJI_METADATA.get(target_key, {"name": target_key, "default": "✨"})
+        new_eid = ""
+
+        if custom_emojis:
+            new_eid = str(custom_emojis[0]).strip()
+        elif message.text and message.text.strip().isdigit():
+            new_eid = message.text.strip()
+        elif message.text and message.text.strip().lower() in ["0", "reset", "standart"]:
+            new_eid = ""
+        else:
+            await message.answer(
+                "⚠️ Iltimos, Telegram Premium Emoji yuboring yoki uning raqamli ID sini yozing (masalan: <code>5368324170671202288</code>).\n"
+                "Bekor qilish uchun /cancel deb yozing.",
+                parse_mode="HTML"
+            )
+            admin_emoji_edit_state[admin_id] = target_key
+            return
+
+        await database.set_setting(f"emoji_{target_key}", new_eid)
+        config.PREMIUM_EMOJIS[target_key] = new_eid
+
+        back_kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✨ Emojilar menyusi", callback_data="admin_emojis_menu")
+        ]])
+
+        if new_eid:
+            await message.answer(
+                f"✅ <b>{meta['name']}</b> uchun Premium Emoji saqlandi!\n\n"
+                f"🆔 <b>Emoji ID:</b> <code>{new_eid}</code>\n"
+                f"Ko'rinishi: <tg-emoji emoji-id=\"{new_eid}\">{meta['default']}</tg-emoji>",
+                parse_mode="HTML",
+                reply_markup=back_kb
+            )
+        else:
+            await message.answer(
+                f"✅ <b>{meta['name']}</b> uchun standart {meta['default']} emojisi tiklandi.",
+                parse_mode="HTML",
+                reply_markup=back_kb
+            )
+        return
+
+    # 3. Agar admin oddiy holatda botga Premium Emoji yuborsa (ID aniqlash va 1-bosishda biriktirish):
+    if is_admin and custom_emojis:
+        for eid in custom_emojis[:2]:
+            detect_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="⚡️ Chaqmoq (Sarlavha)", callback_data=f"set_emoji_id:lightning:{eid}"),
+                    InlineKeyboardButton(text="📌 Mohiyati", callback_data=f"set_emoji_id:pin:{eid}")
+                ],
+                [
+                    InlineKeyboardButton(text="📊 Tafsilotlar", callback_data=f"set_emoji_id:chart:{eid}"),
+                    InlineKeyboardButton(text="💡 Xulosa", callback_data=f"set_emoji_id:bulb:{eid}")
+                ],
+                [
+                    InlineKeyboardButton(text="📡 Manba", callback_data=f"set_emoji_id:antenna:{eid}"),
+                    InlineKeyboardButton(text="🏷 Hashtag", callback_data=f"set_emoji_id:tag:{eid}")
+                ],
+                [
+                    InlineKeyboardButton(text="❌ Kerak emas (Yopish)", callback_data="delete_message")
+                ]
+            ])
+            text = (
+                "✨ <b>Telegram Premium Custom Emoji aniqlandi!</b>\n\n"
+                f"🆔 <b>Emoji ID:</b> <code>{eid}</code> <i>(nusxalash uchun bosing)</i>\n"
+                f"🔗 <b>Telegram Link:</b> <code>tg://emoji?id={eid}</code>\n"
+                f"Ko'rinishi: <tg-emoji emoji-id=\"{eid}\">✨</tg-emoji>\n\n"
+                "<b>Ushbu emojini kanal xabarlarining qaysi bo'limiga o'rnatmoqchisiz?</b>"
+            )
+            await message.answer(text, parse_mode="HTML", reply_markup=detect_kb)
+        return
+
+    # 4. Agar foydalanuvchi Qidiruv holatida bo'lsa:
     if user_search_state.get(message.from_user.id):
         user_search_state.pop(message.from_user.id, None)
         query = (message.text or "").strip()

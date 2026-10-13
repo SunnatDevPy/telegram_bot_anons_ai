@@ -58,8 +58,17 @@ async def init_db():
                 "INSERT OR IGNORE INTO settings (key, value) VALUES ('admin_id', ?)",
                 (str(config.INITIAL_ADMIN_ID),)
             )
-
         await db.commit()
+
+    await load_emojis_to_config()
+
+async def load_emojis_to_config():
+    """Bazadagi saqlangan Premium Emojilarni config.PREMIUM_EMOJIS ga yuklash"""
+    keys = ["lightning", "pin", "chart", "bulb", "antenna", "tag"]
+    for k in keys:
+        val = await get_setting(f"emoji_{k}")
+        if val is not None and str(val).strip():
+            config.PREMIUM_EMOJIS[k] = str(val).strip()
 
 async def get_setting(key: str, default: Any = None) -> Any:
     async with get_db() as db:
