@@ -25,12 +25,11 @@ def get_gemini_client() -> Optional[genai.Client]:
 async def execute_gemini_prompt(prompt: str) -> Optional[str]:
     """Barcha kalitlar va barcha modellar bo'ylab xavfsiz so'rov yuborish (Multi-Key & Multi-Model Pool)"""
     candidate_models = [
-        "gemini-3.8-flash",
-        "gemini-3.6-flash",
-        "gemini-3-flash",
-        "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
-        "gemini-flash-latest"
+        "gemini-3-flash-preview",
+        "gemini-3.1-flash-lite-preview",
+        "gemini-flash-latest",
+        "gemini-flash-lite-latest",
+        "gemini-3.8-flash"
     ]
     clients = get_all_clients()
     if not clients:
