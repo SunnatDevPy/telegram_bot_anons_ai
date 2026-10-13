@@ -57,9 +57,10 @@ async def check_due_scheduled_posts(bot: Bot):
     due_posts = await database.get_due_scheduled_posts()
     for post in due_posts:
         now_str = datetime.now(timezone.utc).isoformat()
+        # Avval statusni published qilamiz, shunda reja qayta ishlamaydi
+        await database.set_post_status(post["id"], "published", published_at=now_str)
         try:
             await send_to_channel(bot, post["image_url"], post["uz_caption"])
-            await database.set_post_status(post["id"], "published", published_at=now_str)
             print(f"[Avto-Reja] Post #{post['id']} kanalga muvaffaqiyatli chiqarildi.")
         except Exception as e:
             print(f"[Avto-Reja Xatolik] Post #{post['id']}: {e}")
@@ -92,18 +93,19 @@ async def process_news_cycle(bot: Bot) -> int:
         if mode == "auto":
             # AVTOMATIK REJIM: Birinchi xabar hoziroq, keyingilari esa obunachilarni bezovta qilmaslik uchun 25 daqiqadan navbatga qo'yiladi
             if processed_count == 0:
+                # Avval bazaga postni kiritamiz (qayta takrorlanish xavfini 100% yo'qotish uchun)
+                post_id = await database.create_post(
+                    url=item["url"],
+                    title=item["title"],
+                    original_summary=item["summary"],
+                    uz_caption=uz_caption,
+                    image_url=item["image_url"],
+                    source_name=item["source_name"],
+                    status="published",
+                    published_at=now_str
+                )
                 try:
                     await send_to_channel(bot, item["image_url"], uz_caption)
-                    await database.create_post(
-                        url=item["url"],
-                        title=item["title"],
-                        original_summary=item["summary"],
-                        uz_caption=uz_caption,
-                        image_url=item["image_url"],
-                        source_name=item["source_name"],
-                        status="published",
-                        published_at=now_str
-                    )
                     processed_count += 1
                     print(f"[Avto-Chiqarish] '{item['title']}' kanalga joylandi.")
                 except Exception as e:

@@ -78,22 +78,49 @@ async def set_setting(key: str, value: Any):
         )
         await db.commit()
 
+STOP_WORDS = {
+    "a", "an", "the", "and", "or", "in", "on", "at", "to", "for", "of", "with",
+    "by", "from", "up", "about", "into", "over", "after", "is", "are", "was",
+    "were", "be", "been", "being", "have", "has", "had", "do", "does", "did",
+    "can", "could", "will", "would", "shall", "should", "may", "might", "must",
+    "it", "its", "it's", "that", "this", "these", "those", "reportedly", "says",
+    "new", "first", "so", "more", "no", "just", "allegedly", "how", "what", "why"
+}
+
+def extract_core_keywords(text: str) -> set:
+    """Sarlavhadan asosiy kalit so'zlarni ajratib olish (stemming va stop-so'zlarni olib tashlash)"""
+    import re
+    cleaned = re.sub(r'[^\w\s]', ' ', text.lower())
+    words = cleaned.split()
+    core = set()
+    for w in words:
+        if len(w) <= 2 or w in STOP_WORDS:
+            continue
+        stem = w
+        if stem.endswith("ing") and len(stem) > 5:
+            stem = stem[:-3]
+        elif stem.endswith("ed") and len(stem) > 4:
+            stem = stem[:-2]
+        elif stem.endswith("s") and len(stem) > 3 and not stem.endswith("ss"):
+            stem = stem[:-1]
+        core.add(stem)
+    return core
+
 def normalize_url(url: str) -> str:
-    """URL dan tracking parametrlarini olib tashlash"""
+    """URL dan tracking parametrlarini olib tashlash va domen/pathni tozalash"""
     import urllib.parse
     parsed = urllib.parse.urlparse(url)
-    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
-
-def normalize_title(title: str) -> str:
-    """Sarlavhadan tinish belgilari va ortiqcha so'zlarni olib tashlash"""
-    import re
-    cleaned = re.sub(r'[^\w\s]', '', title.lower())
-    return " ".join(cleaned.split())
+    netloc = parsed.netloc.lower().replace("www.", "")
+    path = parsed.path.rstrip("/")
+    return f"{netloc}{path}".lower()
 
 async def is_url_exists(url: str) -> bool:
     clean_u = normalize_url(url)
+    if not clean_u:
+        return False
+    slug = clean_u.split("/")[-1] if "/" in clean_u else clean_u
     async with get_db() as db:
-        async with db.execute("SELECT 1 FROM posts WHERE url LIKE ?", (f"%{clean_u}%",)) as cursor:
+        async with db.execute("SELECT 1 FROM posts WHERE url LIKE ? OR url LIKE ?", (f"%{clean_u}%", f"%{slug}%")) as cursor:
             row = await cursor.fetchone()
             return row is not None
 
@@ -103,25 +130,24 @@ async def is_duplicate_news(url: str, title: str) -> bool:
     if await is_url_exists(url):
         return True
 
-    # 2. Sarlavhalar o'xshashligini tekshirish (oxirgi 60 ta post bo'yicha)
-    norm_t = normalize_title(title)
-    words = set(norm_t.split())
-    if len(words) <= 3:
+    # 2. Sarlavhalardagi asosiy kalit so'zlar bo'yicha tekshirish (oxirgi 100 ta post)
+    core_new = extract_core_keywords(title)
+    if len(core_new) <= 2:
         return False
 
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT title FROM posts ORDER BY id DESC LIMIT 60") as cursor:
+        async with db.execute("SELECT title, url FROM posts ORDER BY id DESC LIMIT 100") as cursor:
             rows = await cursor.fetchall()
             for row in rows:
-                existing_norm = normalize_title(row["title"])
-                existing_words = set(existing_norm.split())
-                if len(existing_words) > 3:
-                    overlap = len(words & existing_words)
-                    similarity = overlap / min(len(words), len(existing_words))
-                    if similarity >= 0.65:
-                        # 65% dan ortiq o'xshash bo'lsa - bu ayni bitta yangilik
-                        return True
+                existing_core = extract_core_keywords(row["title"])
+                if len(existing_core) <= 2:
+                    continue
+                common = core_new & existing_core
+                similarity = len(common) / min(len(core_new), len(existing_core))
+                # Agar 3 ta kalit so'z mos kelsa yoki o'xshashlik 45% dan yuqori bo'lsa
+                if len(common) >= 3 and similarity >= 0.45:
+                    return True
 
     return False
 
