@@ -312,7 +312,14 @@ QOIDALAR:
 """
 
     if client:
-        candidate_models = ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-flash-latest"]
+        candidate_models = [
+            "gemini-3.8-flash",
+            "gemini-3.6-flash",
+            "gemini-3-flash",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
+            "gemini-flash-latest"
+        ]
         for model_name in candidate_models:
             try:
                 response = await asyncio.to_thread(
@@ -355,18 +362,26 @@ Format:
 
 [...] belgilarisiz, 600 belgi atrofida.
 """
-    try:
-        response = await asyncio.to_thread(
-            client.models.generate_content,
-            model="gemini-3.8-flash",
-            contents=prompt
-        )
-        if response and response.text:
-            cleaned = sanitize_telegram_html(response.text)
-            cleaned = fix_blockquote_tags(cleaned)
-            cleaned = format_paragraph_spacing(cleaned)
-            return apply_premium_emojis(cleaned)
-    except Exception as e:
-        print(f"[Gemini Regen Xatolik]: {e}")
-
+    candidate_models = [
+        "gemini-3.8-flash",
+        "gemini-3.6-flash",
+        "gemini-3-flash",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+        "gemini-flash-latest"
+    ]
+    for model_name in candidate_models:
+        try:
+            response = await asyncio.to_thread(
+                client.models.generate_content,
+                model=model_name,
+                contents=prompt
+            )
+            if response and response.text:
+                cleaned = sanitize_telegram_html(response.text)
+                cleaned = fix_blockquote_tags(cleaned)
+                cleaned = format_paragraph_spacing(cleaned)
+                return apply_premium_emojis(cleaned)
+        except Exception:
+            continue
     return current_caption
