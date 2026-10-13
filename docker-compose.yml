@@ -1,0 +1,14 @@
+services:
+  neuratech-bot:
+    build: .
+    container_name: neuratech-bot
+    restart: always
+    env_file:
+      - .env
+    volumes:
+      - ./bot_data.db:/app/bot_data.db
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
