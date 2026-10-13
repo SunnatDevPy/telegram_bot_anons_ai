@@ -133,16 +133,18 @@ async def create_post(
     image_url: Optional[str],
     source_name: str,
     status: str = "draft",
-    scheduled_at: Optional[str] = None
+    scheduled_at: Optional[str] = None,
+    published_at: Optional[str] = None
 ) -> int:
     now_str = datetime.now(timezone.utc).isoformat()
+    pub_at = published_at if published_at else (now_str if status == "published" else None)
     async with get_db() as db:
         cursor = await db.execute("""
             INSERT INTO posts (
                 url, title, original_summary, uz_caption, image_url,
-                source_name, status, created_at, scheduled_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (url, title, original_summary, uz_caption, image_url, source_name, status, now_str, scheduled_at))
+                source_name, status, created_at, scheduled_at, published_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (url, title, original_summary, uz_caption, image_url, source_name, status, now_str, scheduled_at, pub_at))
         await db.commit()
         return cursor.lastrowid
 

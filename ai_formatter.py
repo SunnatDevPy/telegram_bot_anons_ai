@@ -269,7 +269,7 @@ def safe_telegram_caption(caption: str, footer: str = "", max_len: int = 1024) -
     result = trimmed.strip()
     if footer_text:
         result += "\n\n" + footer_text.strip()
-    return result[:max_len]
+    return result
 
 async def fallback_formatter(title: str, summary: str, source_name: str, original_url: str = "") -> str:
     """Gemini ishlamagan taqdirda o'zbekcha tarjima qilib, ochiluvchi sitata (blockquote expandable) bilan xavfsiz formatlash"""
