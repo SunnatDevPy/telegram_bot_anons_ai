@@ -100,6 +100,25 @@ async def translate_to_uzbek(text: str) -> str:
         print(f"[Tarjima xatosi]: {e}")
     return cleaned
 
+def clean_all_asterisks_to_html(text: str) -> str:
+    """Barcha Markdown ** yoki * yulduzchalarini Telegram HTML <b> teglariga o'tkazish yoki tozalash"""
+    if not text:
+        return ""
+    # 1. <b>**...**</b> yoki **<b>...</b>** aralash holatlarni tozalash
+    text = re.sub(r'<b>\s*\*{1,3}(.*?)\*{1,3}\s*</b>', r'<b>\1</b>', text, flags=re.DOTALL)
+    text = re.sub(r'\*{1,3}\s*<b>(.*?)</b>\s*\*{1,3}', r'<b>\1</b>', text, flags=re.DOTALL)
+
+    # 2. **matn** juftlarini (hatto ko'p qatorli bo'lsa ham) <b>matn</b> ga aylantirish
+    text = re.sub(r'\*\*(.+?)\*\*', lambda m: f"<b>{m.group(1).strip()}</b>", text, flags=re.DOTALL)
+
+    # 3. Yolg'iz yoki ortiqcha qolgan barcha ** larni to'liq olib tashlash
+    text = re.sub(r'\*{2,}', '', text)
+
+    # 4. <b> ichidagi ortiqcha yangi qator (\n) larni teglardan tashqariga chiqarish
+    text = re.sub(r'<b>(.*?)(\n+)</b>', r'<b>\1</b>\2', text)
+    text = re.sub(r'<b>\s*</b>', '', text)
+    return text
+
 def sanitize_telegram_html(text: str) -> str:
     """Telegram qabul qiladigan HTML teglarini tozalash va xavfsiz qilish"""
     text = re.sub(r'```(?:html)?', '', text)
@@ -108,10 +127,8 @@ def sanitize_telegram_html(text: str) -> str:
     text = re.sub(r'\[\s*…\s*\]\.{0,}', '', text)
     text = re.sub(r'&hellip;', '', text)
     text = re.sub(r'\[\s*\.\.\.\s*\]', '', text)
-    # Markdown **bold** sintaksisini Telegram HTML <b>bold</b> ga aylantirish
-    text = re.sub(r'<b>\s*\*\*(.*?)\*\*\s*</b>', r'<b>\1</b>', text)
-    text = re.sub(r'\*\*\s*<b>(.*?)</b>\s*\*\*', r'<b>\1</b>', text)
-    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+
+    text = clean_all_asterisks_to_html(text)
 
     # Faqat gorizontal bo'shliqlar tozalanadi, qator tashlashlar (\n) saqlanadi!
     text = re.sub(r'[^\S\r\n]+', ' ', text)
@@ -272,6 +289,7 @@ def fix_blockquote_tags(t: str) -> str:
 
 def safe_telegram_caption(caption: str, footer: str = "", max_len: int = 1024) -> str:
     """Caption va footerni max_len belgidan oshirmasdan va ochiq HTML teglarni buzmasdan xavfsiz tayyorlash"""
+    caption = clean_all_asterisks_to_html(caption)
     footer_text = footer if footer else ""
     full = (caption.strip() + "\n\n" + footer_text.strip()) if footer_text else caption.strip()
     if len(full) <= max_len:
