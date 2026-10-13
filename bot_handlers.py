@@ -11,6 +11,7 @@ from aiogram.filters import Command
 import config
 import database
 from ai_formatter import regenerate_news, safe_telegram_caption
+from media_helper import send_media_robust
 
 router = Router()
 
@@ -506,19 +507,12 @@ async def cb_publish_post(call: CallbackQuery, bot: Bot):
     try:
         sent_successfully = False
         if post.get("image_url"):
-            try:
-                await bot.send_photo(
-                    chat_id=config.CHANNEL_ID,
-                    photo=post["image_url"],
-                    caption=photo_caption,
-                    parse_mode="HTML"
-                )
-                sent_successfully = True
-            except Exception as img_err:
-                err_lower = str(img_err).lower()
-                if any(x in err_lower for x in ["forbidden", "chat not found", "rights", "member", "blocked"]):
-                    raise img_err
-                print(f"[Rasm yuklanmadi, matn yuborilmoqda]: {img_err}")
+            sent_successfully = await send_media_robust(
+                bot=bot,
+                chat_id=config.CHANNEL_ID,
+                media_url=post["image_url"],
+                caption=photo_caption
+            )
 
         if not sent_successfully:
             await bot.send_message(

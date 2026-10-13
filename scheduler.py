@@ -6,21 +6,20 @@ import database
 from rss_parser import scan_all_feeds
 from ai_formatter import format_news, safe_telegram_caption
 from bot_handlers import get_moderation_keyboard
+from media_helper import send_media_robust
 
 async def send_to_channel(bot: Bot, image_url: str, caption: str):
     """Kanalga rasm yoki matnli xabarni chop etish"""
     full_photo_caption = safe_telegram_caption(caption, config.CHANNEL_FOOTER, max_len=1024)
     if image_url:
-        try:
-            await bot.send_photo(
-                chat_id=config.CHANNEL_ID,
-                photo=image_url,
-                caption=full_photo_caption,
-                parse_mode="HTML"
-            )
+        sent = await send_media_robust(
+            bot=bot,
+            chat_id=config.CHANNEL_ID,
+            media_url=image_url,
+            caption=full_photo_caption
+        )
+        if sent:
             return True
-        except Exception as e:
-            print(f"[Kanal Rasm Xatolik]: {e}. Matnning o'zi yuborilmoqda...")
 
     text_msg = safe_telegram_caption(caption, config.CHANNEL_FOOTER, max_len=4096)
     await bot.send_message(
@@ -36,21 +35,19 @@ async def send_draft_to_admin(bot: Bot, admin_id: int, post_id: int, image_url: 
     safe_cap = safe_telegram_caption(caption, max_len=1024)
 
     if image_url:
-        try:
-            await bot.send_photo(
-                chat_id=admin_id,
-                photo=image_url,
-                caption=safe_cap,
-                parse_mode="HTML",
-                reply_markup=kb
-            )
+        sent = await send_media_robust(
+            bot=bot,
+            chat_id=admin_id,
+            media_url=image_url,
+            caption=safe_cap,
+            reply_markup=kb
+        )
+        if sent:
             return
-        except Exception as e:
-            print(f"[Admin Rasm Xatolik]: {e}")
 
     await bot.send_message(
         chat_id=admin_id,
-        text=caption[:4096],
+        text=safe_telegram_caption(caption, max_len=4096),
         parse_mode="HTML",
         reply_markup=kb
     )
