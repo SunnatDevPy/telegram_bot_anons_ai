@@ -24,7 +24,8 @@ def get_next_morning_time(delay_index: int = 0) -> str:
     # Agar yarim kechadan keyin bo'lsa (00:00 - 07:30), o'sha kungi 08:00, aks holda ertangi 08:00
     target_date = now_t.date() if (h < 7 or (h == 7 and m < 30)) else (now_t + timedelta(days=1)).date()
     morning_base = datetime.combine(target_date, time(8, 0), tzinfo=config.TASHKENT_TZ)
-    morning_time = morning_base + timedelta(minutes=delay_index * 20)
+    spacing = getattr(config, "POST_SPACING_MINUTES", 10)
+    morning_time = morning_base + timedelta(minutes=delay_index * spacing)
     return morning_time.astimezone(timezone.utc).isoformat()
 
 async def send_to_channel(bot: Bot, image_url: str, caption: str):
@@ -78,15 +79,31 @@ async def check_due_scheduled_posts(bot: Bot):
         return
 
     due_posts = await database.get_due_scheduled_posts()
-    for post in due_posts:
-        now_str = datetime.now(timezone.utc).isoformat()
-        # Avval statusni published qilamiz, shunda reja qayta ishlamaydi
-        await database.set_post_status(post["id"], "published", published_at=now_str)
+    if not due_posts:
+        return
+
+    spacing_mins = getattr(config, "POST_SPACING_MINUTES", 10)
+
+    # Oxirgi chiqqan postdan beri kamida 10 daqiqa o'tganligini kafolatlash
+    last_pub = await database.get_last_published_post()
+    if last_pub and last_pub.get("published_at"):
         try:
-            await send_to_channel(bot, post["image_url"], post["uz_caption"])
-            print(f"[Avto-Reja] Post #{post['id']} kanalga muvaffaqiyatli chiqarildi.")
-        except Exception as e:
-            print(f"[Avto-Reja Xatolik] Post #{post['id']}: {e}")
+            lp_dt = datetime.fromisoformat(last_pub["published_at"])
+            elapsed_mins = (datetime.now(timezone.utc) - lp_dt).total_seconds() / 60
+            if elapsed_mins < spacing_mins:
+                return  # Hali oraliq vaqt to'lmadi, keyingi tekshiruvda chiqariladi
+        except Exception:
+            pass
+
+    # Ketma-ket spam bo'lmasligi uchun faqat 1 ta eng birinchi rejadagi post chiqariladi
+    post = due_posts[0]
+    now_str = datetime.now(timezone.utc).isoformat()
+    await database.set_post_status(post["id"], "published", published_at=now_str)
+    try:
+        await send_to_channel(bot, post["image_url"], post["uz_caption"])
+        print(f"[Avto-Reja] Post #{post['id']} kanalga muvaffaqiyatli chiqarildi.")
+    except Exception as e:
+        print(f"[Avto-Reja Xatolik] Post #{post['id']}: {e}")
 
 async def check_daily_digest(bot: Bot):
     """Har kuni soat 21:00 da o'sha kungi eng muhim 5 ta xabar dayjestini chiqarish"""
@@ -156,6 +173,9 @@ async def process_news_cycle(bot: Bot) -> int:
         now_str = datetime.now(timezone.utc).isoformat()
 
         if mode == "auto":
+            spacing_mins = getattr(config, "POST_SPACING_MINUTES", 10)
+            now_utc = datetime.now(timezone.utc)
+
             # Tungi rejimda barcha yangi xabarlar ertalabki 08:00 ga navbatga qo'yiladi
             if in_night:
                 morning_sched = get_next_morning_time(processed_count)
@@ -171,40 +191,74 @@ async def process_news_cycle(bot: Bot) -> int:
                 )
                 processed_count += 1
                 print(f"[Tungi Rejim] '{item['title']}' ertalab 08:00 ga navbatga qo'yildi.")
-            elif processed_count == 0:
-                # Kunduzgi rejim: Birinchi xabar darhol kanalga
-                post_id = await database.create_post(
-                    url=item["url"],
-                    title=item["title"],
-                    original_summary=item["summary"],
-                    uz_caption=uz_caption,
-                    image_url=item["image_url"],
-                    source_name=item["source_name"],
-                    status="published",
-                    published_at=now_str
-                )
-                try:
-                    await send_to_channel(bot, item["image_url"], uz_caption)
-                    processed_count += 1
-                    print(f"[Avto-Chiqarish] '{item['title']}' kanalga joylandi.")
-                except Exception as e:
-                    print(f"[Avto-Chiqarish Xatolik]: {e}")
             else:
-                # Keyingi xabarlar +25 daqiqaga navbatga qo'yiladi
-                delay_mins = processed_count * 25
-                sched_time = (datetime.now(timezone.utc) + timedelta(minutes=delay_mins)).isoformat()
-                await database.create_post(
-                    url=item["url"],
-                    title=item["title"],
-                    original_summary=item["summary"],
-                    uz_caption=uz_caption,
-                    image_url=item["image_url"],
-                    source_name=item["source_name"],
-                    status="scheduled",
-                    scheduled_at=sched_time
-                )
-                processed_count += 1
-                print(f"[Avto-Navbat] '{item['title']}' +{delay_mins} daqiqaga rejalashtirildi.")
+                last_pub = await database.get_last_published_post()
+                last_sched_str = await database.get_last_scheduled_time()
+
+                # Oxirgi e'lon qilingan postdan beri necha daqiqa o'tgan?
+                elapsed_mins = 999.0
+                if last_pub and last_pub.get("published_at"):
+                    try:
+                        lp_dt = datetime.fromisoformat(last_pub["published_at"])
+                        elapsed_mins = (now_utc - lp_dt).total_seconds() / 60
+                    except Exception:
+                        pass
+
+                # Agar oxirgi postga kamida 10 daqiqa bo'lgan bo'lsa va navbatda reja bo'lmasa: darhol 1-post chiqadi
+                can_publish_now = (processed_count == 0 and elapsed_mins >= spacing_mins and not last_sched_str)
+
+                if can_publish_now:
+                    now_str = now_utc.isoformat()
+                    post_id = await database.create_post(
+                        url=item["url"],
+                        title=item["title"],
+                        original_summary=item["summary"],
+                        uz_caption=uz_caption,
+                        image_url=item["image_url"],
+                        source_name=item["source_name"],
+                        status="published",
+                        published_at=now_str
+                    )
+                    try:
+                        await send_to_channel(bot, item["image_url"], uz_caption)
+                        processed_count += 1
+                        print(f"[Avto-Chiqarish] '{item['title']}' kanalga joylandi.")
+                    except Exception as e:
+                        print(f"[Avto-Chiqarish Xatolik]: {e}")
+                else:
+                    # Aks holda kamida 10 daqiqa oraliq bilan navbatga (scheduled) qo'yiladi
+                    anchor_time = now_utc
+                    if last_sched_str:
+                        try:
+                            ls_dt = datetime.fromisoformat(last_sched_str)
+                            if ls_dt > anchor_time:
+                                anchor_time = ls_dt
+                        except Exception:
+                            pass
+                    elif last_pub and last_pub.get("published_at") and elapsed_mins < spacing_mins:
+                        try:
+                            anchor_time = datetime.fromisoformat(last_pub["published_at"])
+                        except Exception:
+                            pass
+
+                    # Rejalashtirilgan vaqtni hisoblash (har bir post orasida kamida 10 daqiqa)
+                    delay_step = processed_count + (0 if can_publish_now else 1)
+                    sched_dt = max(now_utc + timedelta(minutes=1), anchor_time + timedelta(minutes=delay_step * spacing_mins))
+                    sched_time = sched_dt.isoformat()
+
+                    await database.create_post(
+                        url=item["url"],
+                        title=item["title"],
+                        original_summary=item["summary"],
+                        uz_caption=uz_caption,
+                        image_url=item["image_url"],
+                        source_name=item["source_name"],
+                        status="scheduled",
+                        scheduled_at=sched_time
+                    )
+                    processed_count += 1
+                    diff_mins = max(1, int((sched_dt - now_utc).total_seconds() / 60))
+                    print(f"[Avto-Navbat] '{item['title']}' +{diff_mins} daqiqaga rejalashtirildi (10 min oraliq).")
         else:
             # MODERATSIYA REJIMI
             post_id = await database.create_post(

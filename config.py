@@ -69,18 +69,10 @@ def render_emoji(key: str, default_char: str) -> str:
         return f'<tg-emoji emoji-id="{eid}">{default_char}</tg-emoji>'
     return default_char
 
-# Sara IT, AI, yangi chiplar, devayslar va startaplar RSS manbalari (Chegirmasiz, apparat ta'minoti, innovatsiyalar va startaplar)
+POST_SPACING_MINUTES = int(os.getenv("POST_SPACING_MINUTES", "10"))
+
+# Sara IT, AI, startaplar va texno-kompaniyalar RSS manbalari (AI va Startaplar 1-o'rinda)
 RSS_SOURCES = [
-    {
-        "name": "Tom's Hardware",
-        "url": "https://www.tomshardware.com/feeds.xml",
-        "category": "Chiplar, GPU & Uskunalar"
-    },
-    {
-        "name": "GSMArena",
-        "url": "https://www.gsmarena.com/rss-news-reviews.php3",
-        "category": "Flagman Smartfonlar & Yangi Devayslar"
-    },
     {
         "name": "TechCrunch AI",
         "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
@@ -94,22 +86,32 @@ RSS_SOURCES = [
     {
         "name": "The Decoder",
         "url": "https://the-decoder.com/feed/",
-        "category": "AI Modellar & Benchmarklar"
-    },
-    {
-        "name": "Engadget",
-        "url": "https://www.engadget.com/rss.xml",
-        "category": "Yangi Gadjetlar & Texnologiyalar"
+        "category": "AI Modellar & Tadqiqotlar"
     },
     {
         "name": "The Verge",
         "url": "https://www.theverge.com/rss/index.xml",
-        "category": "IT & Gadjetlar"
+        "category": "IT Kompaniyalar & Texnologiya"
+    },
+    {
+        "name": "Tom's Hardware",
+        "url": "https://www.tomshardware.com/feeds.xml",
+        "category": "Chiplar, GPU & Uskunalar"
     },
     {
         "name": "Ars Technica",
         "url": "https://feeds.arstechnica.com/arstechnica/index",
-        "category": "Texnologiya & Ilm-fan"
+        "category": "IT Sanoat & Texnologiya"
+    },
+    {
+        "name": "GSMArena",
+        "url": "https://www.gsmarena.com/rss-news-reviews.php3",
+        "category": "Flagman Smartfonlar & Yangi Devayslar"
+    },
+    {
+        "name": "Engadget",
+        "url": "https://www.engadget.com/rss.xml",
+        "category": "Yangi Texnologiyalar"
     }
 ]
 

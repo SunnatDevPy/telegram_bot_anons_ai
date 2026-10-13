@@ -244,6 +244,31 @@ async def get_due_scheduled_posts() -> List[Dict[str, Any]]:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
+async def get_last_published_post() -> Optional[Dict[str, Any]]:
+    """Kanalga eng oxirgi chiqarilgan postni olish"""
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM posts 
+            WHERE status = 'published' AND published_at IS NOT NULL
+            ORDER BY published_at DESC LIMIT 1
+        """) as cursor:
+            row = await cursor.fetchone()
+            return dict(row) if row else None
+
+async def get_last_scheduled_time() -> Optional[str]:
+    """Hozir navbatda turgan eng oxirgi kelgusi postning vaqtini olish"""
+    now_str = datetime.now(timezone.utc).isoformat()
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT scheduled_at FROM posts 
+            WHERE status = 'scheduled' AND scheduled_at > ?
+            ORDER BY scheduled_at DESC LIMIT 1
+        """, (now_str,)) as cursor:
+            row = await cursor.fetchone()
+            return row["scheduled_at"] if row else None
+
 async def register_user(
     user_id: int,
     username: Optional[str] = None,

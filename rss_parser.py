@@ -177,6 +177,55 @@ def is_commercial_deal(title: str, url: str = "", summary: str = "") -> bool:
 
     return False
 
+UNWANTED_TOPIC_PATTERNS = [
+    # Kino, serial, striming narxlari va ko'ngilochar shoular
+    "discovery plus", "discovery+", "disney+", "netflix", "hbo max", "paramount+", "peacock",
+    "movie", "movies", "tv show", "tv series", "season finale", "episode", "box office",
+    "trailer", "hollywood", "actor", "actress", "oscar", "emmy", "cinema",
+    # O'yinlar (sof ko'ngilochar o'yinlar)
+    "gameplay", "walkthrough", "hogwarts legacy", "gta 6", "grand theft auto", "nintendo switch",
+    "playstation plus", "xbox game pass", "dlc", "zelda", "pokemon", "fortnite",
+    # Mayda maishiy uy buyumlari
+    "robot vacuum", "air purifier", "smart plug", "toaster", "blender", "coffee maker"
+]
+
+AI_STARTUP_PRIORITY_KEYWORDS = [
+    "ai", "artificial intelligence", "llm", "gpt", "openai", "gemini", "deepseek",
+    "anthropic", "claude", "machine learning", "neural", "chatgpt", "copilot", "agent",
+    "startup", "startups", "funding", "seed", "series a", "series b", "venture capital",
+    "vc", "invest", "investor", "acquisition", "acquired", "raises", "valuation", "unicorn",
+    "apple", "microsoft", "google", "nvidia", "meta", "amazon", "intel", "amd", "tsmc",
+    "qualcomm", "layoff", "layoffs", "ceo", "strategy", "ipo", "enterprise", "cloud",
+    "y combinator", "accelerator", "tech company", "semiconductor", "chipmaker"
+]
+
+def is_unwanted_topic(title: str, url: str = "", summary: str = "") -> bool:
+    """Kino, serial, o'yinlar va maishiy buyumlar kabi ikkinchi darajali mavzularni filtrlash"""
+    combined = f"{title} {url} {summary}".lower()
+    # Agar xabarda AI, chip, startap yoki texno gigantlar bo'lsa, o'tkazib yubormaymiz
+    has_core_tech = any(
+        re.search(rf'\b{re.escape(k)}\b', combined)
+        for k in ["ai", "chip", "nvidia", "startup", "funding", "openai", "anthropic", "deepseek", "apple", "google", "microsoft"]
+    )
+    if has_core_tech:
+        return False
+
+    return any(p in combined for p in UNWANTED_TOPIC_PATTERNS)
+
+def get_topic_priority(title: str, summary: str = "", category: str = "") -> int:
+    """Mavzular prioriteti: AI, Startaplar va IT kompaniyalar 1-darajali (eng yuqori)"""
+    score = 0
+    combined = f"{title} {summary} {category}".lower()
+
+    if "ai" in category.lower() or "startup" in category.lower():
+        score += 50
+
+    for kw in AI_STARTUP_PRIORITY_KEYWORDS:
+        if re.search(rf'\b{re.escape(kw)}\b', combined):
+            score += 15
+
+    return score
+
 def clean_html(raw_html: str) -> str:
     """HTML teglarini tozalash va toza matn qaytarish"""
     if not raw_html:
@@ -208,6 +257,10 @@ async def fetch_feed_entries(source: Dict[str, str], client: httpx.AsyncClient, 
             if is_commercial_deal(clean_title, link, summary):
                 continue
 
+            # Kino, serial va o'yinlar kabi ikkinchi darajali mavzularni chetlab o'tish
+            if is_unwanted_topic(clean_title, link, summary):
+                continue
+
             # Bazada bormi yoki o'xshash mavzu chiqdimi tekshirish
             if await is_duplicate_news(link, clean_title):
                 continue
@@ -220,13 +273,15 @@ async def fetch_feed_entries(source: Dict[str, str], client: httpx.AsyncClient, 
                     img_url = og_img
             img_url = upgrade_image_url(img_url)
 
+            priority = get_topic_priority(clean_title, summary, source.get("category", ""))
             results.append({
                 "source_name": source["name"],
                 "category": source.get("category", "IT & AI"),
                 "url": link,
                 "title": clean_html(title),
                 "summary": summary,
-                "image_url": img_url
+                "image_url": img_url,
+                "priority": priority
             })
     except Exception as e:
         print(f"[RSS Xatolik] {source['name']}: {e}")
@@ -234,7 +289,7 @@ async def fetch_feed_entries(source: Dict[str, str], client: httpx.AsyncClient, 
     return results
 
 async def scan_all_feeds(limit_per_feed: int = 3) -> List[Dict[str, Any]]:
-    """Barcha tasdiqlangan RSS manbalarini asinxron tekshirish"""
+    """Barcha tasdiqlangan RSS manbalarini asinxron tekshirish va AI/Startaplar bo'yicha saralash"""
     async with httpx.AsyncClient(headers=HEADERS, timeout=15.0) as client:
         tasks = [
             fetch_feed_entries(src, client, limit=limit_per_feed)
@@ -242,9 +297,10 @@ async def scan_all_feeds(limit_per_feed: int = 3) -> List[Dict[str, Any]]:
         ]
         feeds_results = await asyncio.gather(*tasks)
 
-    # Natijalarni birlashtirish
+    # Natijalarni birlashtirish va prioriteti bo'yicha saralash (AI va Startaplar 1-o'rinda)
     all_new_news = []
     for news_list in feeds_results:
         all_new_news.extend(news_list)
 
+    all_new_news.sort(key=lambda x: x.get("priority", 0), reverse=True)
     return all_new_news
