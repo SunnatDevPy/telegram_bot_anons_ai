@@ -1,5 +1,6 @@
+import sqlite3
 import aiosqlite
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any, List
 import config
@@ -129,7 +130,13 @@ async def is_url_exists(url: str) -> bool:
         return False
     slug = clean_u.split("/")[-1] if "/" in clean_u else clean_u
     async with get_db() as db:
-        async with db.execute("SELECT 1 FROM posts WHERE url LIKE ? OR url LIKE ?", (f"%{clean_u}%", f"%{slug}%")) as cursor:
+        if len(slug) >= 12:
+            query = "SELECT 1 FROM posts WHERE url LIKE ? OR url LIKE ?"
+            params = (f"%{clean_u}%", f"%{slug}%")
+        else:
+            query = "SELECT 1 FROM posts WHERE url LIKE ?"
+            params = (f"%{clean_u}%",)
+        async with db.execute(query, params) as cursor:
             row = await cursor.fetchone()
             return row is not None
 
@@ -170,18 +177,25 @@ async def create_post(
     status: str = "draft",
     scheduled_at: Optional[str] = None,
     published_at: Optional[str] = None
-) -> int:
+) -> Optional[int]:
+    """Yangi xabarni bazaga kiritish (URL takrorlansa IntegrityError bermaydi)"""
     now_str = datetime.now(timezone.utc).isoformat()
     pub_at = published_at if published_at else (now_str if status == "published" else None)
     async with get_db() as db:
-        cursor = await db.execute("""
-            INSERT INTO posts (
-                url, title, original_summary, uz_caption, image_url,
-                source_name, status, created_at, scheduled_at, published_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (url, title, original_summary, uz_caption, image_url, source_name, status, now_str, scheduled_at, pub_at))
-        await db.commit()
-        return cursor.lastrowid
+        try:
+            cursor = await db.execute("""
+                INSERT INTO posts (
+                    url, title, original_summary, uz_caption, image_url,
+                    source_name, status, created_at, scheduled_at, published_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (url, title, original_summary, uz_caption, image_url, source_name, status, now_str, scheduled_at, pub_at))
+            await db.commit()
+            return cursor.lastrowid
+        except (sqlite3.IntegrityError, aiosqlite.IntegrityError):
+            db.row_factory = aiosqlite.Row
+            async with db.execute("SELECT id FROM posts WHERE url = ?", (url,)) as cur:
+                row = await cur.fetchone()
+                return row["id"] if row else None
 
 async def get_post(post_id: int) -> Optional[Dict[str, Any]]:
     async with get_db() as db:

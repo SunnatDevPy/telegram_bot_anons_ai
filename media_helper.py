@@ -137,7 +137,7 @@ async def send_media_robust(
 
     url_lower = clean_url.lower()
     is_gif_ext = url_lower.endswith(".gif") or ".gif?" in url_lower
-    is_video_ext = any(url_lower.endswith(ext) or f"{ext}?" in url_lower for ext in [".mp4", ".mov", ".webm"])
+    is_video_ext = any(url_lower.endswith(ext) or f"{ext}?" in url_lower for ext in [".mp4", ".mov", ".webm", ".m4v", ".ogv", ".mkv"])
 
     # 1. Avval fayl baytlarini httpx orqali yuklab olish (CDN va bot-bloklashlarni yengish)
     try:
@@ -145,8 +145,12 @@ async def send_media_robust(
             resp = await client.get(clean_url)
             if resp.status_code == 200 and len(resp.content) > 500:
                 content_type = resp.headers.get("content-type", "").lower()
-                is_gif = is_gif_ext or "image/gif" in content_type or "gif" in content_type
-                is_video = is_video_ext or ("video/" in content_type and not is_gif)
+                magic = resp.content[:32]
+                is_magic_gif = magic.startswith(b"GIF8")
+                is_magic_video = b"ftyp" in magic or magic.startswith(b"\x1a\x45\xdf\xa3")
+
+                is_gif = is_gif_ext or "image/gif" in content_type or "gif" in content_type or is_magic_gif
+                is_video = is_video_ext or ("video/" in content_type and not is_gif) or is_magic_video
 
                 if is_gif:
                     input_file = BufferedInputFile(resp.content, filename="animation.gif")
@@ -231,7 +235,7 @@ async def send_user_preview_media(
 
     url_lower = clean_url.lower()
     is_gif = url_lower.endswith(".gif") or ".gif?" in url_lower
-    is_video = any(url_lower.endswith(ext) or f"{ext}?" in url_lower for ext in [".mp4", ".mov", ".webm"])
+    is_video = any(url_lower.endswith(ext) or f"{ext}?" in url_lower for ext in [".mp4", ".mov", ".webm", ".m4v", ".ogv", ".mkv"])
 
     msg_obj = message_or_call.message if hasattr(message_or_call, "message") else message_or_call
 
