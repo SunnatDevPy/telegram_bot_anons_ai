@@ -15,9 +15,18 @@ HEADERS = {
 }
 
 def extract_image_from_entry(entry: Any) -> Optional[str]:
-    """RSS entry ob'ektidan rasm URL manzilini qidirish"""
+    """RSS entry ob'ektidan rasm, animatsiyali GIF yoki video URL manzilini qidirish"""
     # 1. media_content
     if entry.get("media_content"):
+        # Avval video va GIF animatsiyalarni qidirish
+        for item in entry.media_content:
+            url = item.get("url")
+            m_type = item.get("type", "").lower()
+            medium = item.get("medium", "").lower()
+            if url and ("video" in m_type or medium == "video" or "gif" in m_type or any(url.lower().endswith(ext) for ext in [".gif", ".mp4", ".webm", ".mov"])):
+                return url
+
+        # Keyin sifatli statik rasmlarni qidirish
         for item in entry.media_content:
             url = item.get("url")
             if url and ("image" in item.get("type", "") or item.get("medium") == "image" or any(url.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp"])):
@@ -25,8 +34,13 @@ def extract_image_from_entry(entry: Any) -> Optional[str]:
         if entry.media_content[0].get("url"):
             return entry.media_content[0].get("url")
 
-    # 2. enclosures
+    # 2. enclosures (ko'pincha video va gif fayllar shu yerda bo'ladi)
     if entry.get("enclosures"):
+        for enc in entry.enclosures:
+            href = enc.get("href")
+            e_type = enc.get("type", "").lower()
+            if href and ("video" in e_type or "gif" in e_type or any(href.lower().endswith(ext) for ext in [".gif", ".mp4", ".webm"])):
+                return href
         for enc in entry.enclosures:
             if enc.get("href"):
                 return enc["href"]
@@ -37,7 +51,7 @@ def extract_image_from_entry(entry: Any) -> Optional[str]:
             if thumb.get("url"):
                 return thumb["url"]
 
-    # 4. Content yoki Summary ichidagi HTML img tegidan
+    # 4. Content yoki Summary ichidagi <video>, <source>, yoki <img src="...gif"> teglari
     html_sources = []
     if "content" in entry and entry.content:
         for c in entry.content:
@@ -46,24 +60,40 @@ def extract_image_from_entry(entry: Any) -> Optional[str]:
     if "summary" in entry and entry.summary:
         html_sources.append(entry.summary)
 
-    for html in html_sources:
-        m = re.search(r'<img[^>]+src=["\'](https?://[^"\']+)["\']', html, re.IGNORECASE)
-        if m:
-            img_url = m.group(1)
-            # Kichik piktogrammalar yoki tracking pixellardan qochish
+    for html_text in html_sources:
+        # Video yoki GIF teglari
+        vid_match = re.search(r'<(?:video|source)[^>]+src=["\'](https?://[^"\']+\.(?:mp4|webm|mov))["\']', html_text, re.IGNORECASE)
+        if vid_match:
+            return vid_match.group(1)
+
+        gif_match = re.search(r'<img[^>]+src=["\'](https?://[^"\']+\.gif)["\']', html_text, re.IGNORECASE)
+        if gif_match:
+            return gif_match.group(1)
+
+        img_match = re.search(r'<img[^>]+src=["\'](https?://[^"\']+)["\']', html_text, re.IGNORECASE)
+        if img_match:
+            img_url = img_match.group(1)
             if not any(k in img_url.lower() for k in ["spacer", "1x1", "avatar", "icon"]):
                 return img_url
 
     return None
 
 async def extract_og_image(url: str, client: httpx.AsyncClient) -> Optional[str]:
-    """RSS rasm bermagan taqdirda, maqola sahifasidan og:image olish"""
+    """RSS media bermagan taqdirda, maqola sahifasidan og:video, og:image yoki twitter:image olish"""
     try:
         resp = await client.get(url, timeout=7.0, follow_redirects=True)
         if resp.status_code == 200:
+            # 1. Avval og:video ni tekshirish
+            v_match = re.search(r'<meta\s+property=["\']og:video(?::secure_url)?["\']\s+content=["\'](https?://[^"\']+)["\']', resp.text, re.IGNORECASE)
+            if v_match:
+                return v_match.group(1)
+
+            # 2. Keyin og:image yoki twitter:image
             m = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', resp.text, re.IGNORECASE)
             if not m:
                 m = re.search(r'<meta\s+content=["\']([^"\']+)["\']\s+property=["\']og:image["\']', resp.text, re.IGNORECASE)
+            if not m:
+                m = re.search(r'<meta\s+name=["\']twitter:image["\']\s+content=["\']([^"\']+)["\']', resp.text, re.IGNORECASE)
             if m:
                 return m.group(1)
     except Exception:

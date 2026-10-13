@@ -123,8 +123,10 @@ async def send_media_robust(
     reply_markup: Optional[InlineKeyboardMarkup] = None
 ) -> bool:
     """
-    Rasm yoki videoni yuklab olib, hotlink/CDN bloklarini chetlab o'tgan holda Telegramga xavfsiz yuborish.
-    Agar video bo'lsa send_video, rasm bo'lsa watermark bilan send_photo ishlatadi.
+    Rasm, video yoki animatsiyali GIFni yuklab olib, Telegramga mos ravishda xavfsiz yuborish.
+    - GIF (.gif) bo'lsa -> bot.send_animation (avtomatik qayta-qayta aylanuvchi animatsiya)
+    - Video (.mp4, .mov, .webm) bo'lsa -> bot.send_video
+    - Rasm (.jpg, .png, .webp) bo'lsa -> watermark badge bilan bot.send_photo
     """
     if not media_url:
         return False
@@ -133,25 +135,40 @@ async def send_media_robust(
     if not clean_url.startswith("http"):
         return False
 
-    is_video_ext = any(clean_url.lower().endswith(ext) for ext in [".mp4", ".mov", ".webm"])
+    url_lower = clean_url.lower()
+    is_gif_ext = url_lower.endswith(".gif") or ".gif?" in url_lower
+    is_video_ext = any(url_lower.endswith(ext) or f"{ext}?" in url_lower for ext in [".mp4", ".mov", ".webm"])
 
     # 1. Avval fayl baytlarini httpx orqali yuklab olish (CDN va bot-bloklashlarni yengish)
     try:
-        async with httpx.AsyncClient(headers=HEADERS, timeout=12.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(headers=HEADERS, timeout=16.0, follow_redirects=True) as client:
             resp = await client.get(clean_url)
             if resp.status_code == 200 and len(resp.content) > 500:
                 content_type = resp.headers.get("content-type", "").lower()
-                is_video = is_video_ext or "video" in content_type
+                is_gif = is_gif_ext or "image/gif" in content_type or "gif" in content_type
+                is_video = is_video_ext or ("video/" in content_type and not is_gif)
 
-                if is_video:
+                if is_gif:
+                    input_file = BufferedInputFile(resp.content, filename="animation.gif")
+                    await bot.send_animation(
+                        chat_id=chat_id,
+                        animation=input_file,
+                        caption=caption,
+                        parse_mode="HTML",
+                        reply_markup=reply_markup
+                    )
+                    return True
+                elif is_video:
                     input_file = BufferedInputFile(resp.content, filename="video.mp4")
                     await bot.send_video(
                         chat_id=chat_id,
                         video=input_file,
                         caption=caption,
                         parse_mode="HTML",
-                        reply_markup=reply_markup
+                        reply_markup=reply_markup,
+                        supports_streaming=True
                     )
+                    return True
                 else:
                     watermarked_bytes = apply_watermark(resp.content)
                     input_file = BufferedInputFile(watermarked_bytes, filename="news.jpg")
@@ -162,19 +179,28 @@ async def send_media_robust(
                         parse_mode="HTML",
                         reply_markup=reply_markup
                     )
-                return True
+                    return True
     except Exception as buf_err:
         print(f"[send_media_robust buffer xatolik]: {buf_err}. URL orqali urinilmoqda...")
 
     # 2. Agar baytlar orqali bo'lmasa, to'g'ridan-to'g'ri URL orqali Telegram'ga uzatish
     try:
-        if is_video_ext:
+        if is_gif_ext:
+            await bot.send_animation(
+                chat_id=chat_id,
+                animation=clean_url,
+                caption=caption,
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+        elif is_video_ext:
             await bot.send_video(
                 chat_id=chat_id,
                 video=clean_url,
                 caption=caption,
                 parse_mode="HTML",
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                supports_streaming=True
             )
         else:
             await bot.send_photo(
@@ -187,4 +213,53 @@ async def send_media_robust(
         return True
     except Exception as url_err:
         print(f"[send_media_robust URL xatolik]: {url_err}")
+        return False
+
+async def send_user_preview_media(
+    message_or_call: Any,
+    media_url: Optional[str],
+    caption: str,
+    reply_markup: Optional[InlineKeyboardMarkup] = None
+) -> bool:
+    """Foydalanuvchi yoki adminga bot ichida rasm, video yoki animatsiyani to'g'ri formatda preview qilish"""
+    if not media_url:
+        return False
+
+    clean_url = html.unescape(str(media_url)).strip()
+    if not clean_url.startswith("http"):
+        return False
+
+    url_lower = clean_url.lower()
+    is_gif = url_lower.endswith(".gif") or ".gif?" in url_lower
+    is_video = any(url_lower.endswith(ext) or f"{ext}?" in url_lower for ext in [".mp4", ".mov", ".webm"])
+
+    msg_obj = message_or_call.message if hasattr(message_or_call, "message") else message_or_call
+
+    try:
+        if is_gif:
+            await msg_obj.answer_animation(
+                animation=clean_url,
+                caption=caption[:1024],
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+            return True
+        elif is_video:
+            await msg_obj.answer_video(
+                video=clean_url,
+                caption=caption[:1024],
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+            return True
+        else:
+            await msg_obj.answer_photo(
+                photo=clean_url,
+                caption=caption[:1024],
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+            return True
+    except Exception as e:
+        print(f"[send_user_preview_media xatolik]: {e}")
         return False

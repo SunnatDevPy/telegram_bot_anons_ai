@@ -11,7 +11,7 @@ from aiogram.filters import Command
 import config
 import database
 from ai_formatter import regenerate_news, safe_telegram_caption, answer_ai_assistant_question
-from media_helper import send_media_robust
+from media_helper import send_media_robust, send_user_preview_media
 
 router = Router()
 
@@ -281,16 +281,9 @@ async def cmd_user_latest(message: Message):
 
     caption = post["uz_caption"]
     if post.get("image_url"):
-        try:
-            await message.answer_photo(
-                photo=post["image_url"],
-                caption=caption[:1024],
-                parse_mode="HTML",
-                reply_markup=back_kb
-            )
+        sent = await send_user_preview_media(message, post["image_url"], caption, back_kb)
+        if sent:
             return
-        except Exception:
-            pass
 
     await message.answer(
         text=caption[:4096],
@@ -381,16 +374,9 @@ async def cb_user_post(call: CallbackQuery):
     caption = post["uz_caption"]
 
     if post.get("image_url"):
-        try:
-            await call.message.answer_photo(
-                photo=post["image_url"],
-                caption=caption[:1024],
-                parse_mode="HTML",
-                reply_markup=back_kb
-            )
+        sent = await send_user_preview_media(call, post["image_url"], caption, back_kb)
+        if sent:
             return
-        except Exception:
-            pass
 
     await call.message.answer(
         text=caption[:4096],
