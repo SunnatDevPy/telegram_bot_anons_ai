@@ -52,34 +52,34 @@ def apply_watermark(image_bytes: bytes) -> bytes:
         overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
-        # Matn va shrift o'lchami rasm hajmiga mutanosib (aniq va tiniq)
-        font_size = max(16, int(min(width, height) * 0.038))
+        # Matn va shrift o'lchami rasm hajmiga mutanosib va ixcham (matnlarni to'sib qo'ymaslik uchun)
+        font_size = max(14, int(min(width, height) * 0.032))
         font = get_watermark_font(font_size)
 
-        text = "NeuraTech  |  @neuratech_uz"
+        text = "NeuraTech"
         bbox = draw.textbbox((0, 0), text, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
 
         # Vektorli chaqmoq (⚡️) piktogrammasi o'lchamlari
-        icon_w = int(font_size * 0.75)
-        icon_h = int(font_size * 1.05)
-        icon_spacing = int(font_size * 0.35)
+        icon_w = int(font_size * 0.70)
+        icon_h = int(font_size * 1.00)
+        icon_spacing = int(font_size * 0.30)
 
-        pad_x = int(font_size * 0.85)
-        pad_y = int(font_size * 0.45)
+        pad_x = int(font_size * 0.70)
+        pad_y = int(font_size * 0.35)
 
         total_content_w = icon_w + icon_spacing + text_w
         pill_w = total_content_w + pad_x * 2
         pill_h = max(text_h, icon_h) + pad_y * 2
 
-        margin = max(18, int(min(width, height) * 0.035))
+        margin = max(14, int(min(width, height) * 0.025))
         x2 = width - margin
         y2 = height - margin
         x1 = x2 - pill_w
         y1 = y2 - pill_h
 
-        # 1. Zamonaviy qora shisha fon (Glassmorphism badge) va neon hoshiya
+        # 1. Ixcham zamonaviy qora shisha fon (Glassmorphism badge) va neon hoshiya
         draw.rounded_rectangle(
             (x1, y1, x2, y2),
             radius=int(pill_h / 2),
@@ -101,7 +101,7 @@ def apply_watermark(image_bytes: bytes) -> bytes:
         ]
         draw.polygon(bolt_points, fill=(0, 235, 255, 255))
 
-        # 3. Tiniq oq yozuv
+        # 3. Tiniq oq NeuraTech yozuvi
         tx = ix + icon_w + icon_spacing
         ty = y1 + pad_y - bbox[1] + (max(text_h, icon_h) - text_h) // 2
         draw.text((tx, ty), text, font=font, fill=(255, 255, 255, 255))
