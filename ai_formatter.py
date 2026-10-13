@@ -233,26 +233,24 @@ def format_paragraph_spacing(text: str) -> str:
     return text.strip()
 
 def apply_premium_emojis(text: str) -> str:
-    """Agar .env da Telegram Premium Emoji ID lari ko'rsatilgan bo'lsa, mos emojilarni <tg-emoji> formatiga o'tkazish"""
+    """Agar Telegram Premium Emoji ID lari ko'rsatilgan bo'lsa, mos emojilarni <tg-emoji> formatiga o'tkazish"""
     if not text:
         return ""
+    # 1. Avval mavjud <tg-emoji> teglarini tozalab, ichidagi belgi holatiga qaytaramiz (idempotentlik va yangilanish uchun)
+    text = re.sub(r'<tg-emoji[^>]*>(.*?)</tg-emoji>', r'\1', text)
+
     mappings = [
         (r'⚡️?', "lightning", "⚡️"),
         (r'📌', "pin", "📌"),
-        (r'📊', "chart", "📊"),
-        (r'💡', "bulb", "💡"),
+        (r'(?:📊|📝)', "chart", "📊"),
+        (r'(?:💡|💭)', "bulb", "💡"),
         (r'📡', "antenna", "📡"),
-        (r'🏷', "tag", "🏷"),
+        (r'(?:🏷️?|🔖)', "tag", "🏷"),
     ]
     for char_regex, key, fallback in mappings:
-        eid = config.PREMIUM_EMOJIS.get(key)
+        eid = str(config.PREMIUM_EMOJIS.get(key, "")).strip()
         if eid and eid.isdigit():
-            # Agar oldin <tg-emoji> ichiga olinmagan bo'lsa
-            text = re.sub(
-                rf'(?<!<tg-emoji[^>]*>){char_regex}(?!</tg-emoji>)',
-                f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji>',
-                text
-            )
+            text = re.sub(char_regex, f'<tg-emoji emoji-id="{eid}">{fallback}</tg-emoji>', text)
     return text
 
 def fix_blockquote_tags(t: str) -> str:
@@ -290,13 +288,17 @@ def fix_blockquote_tags(t: str) -> str:
 def safe_telegram_caption(caption: str, footer: str = "", max_len: int = 1024) -> str:
     """Caption va footerni max_len belgidan oshirmasdan va ochiq HTML teglarni buzmasdan xavfsiz tayyorlash"""
     caption = clean_all_asterisks_to_html(caption)
+    caption = apply_premium_emojis(caption)
     footer_text = footer if footer else ""
     full = (caption.strip() + "\n\n" + footer_text.strip()) if footer_text else caption.strip()
-    if len(full) <= max_len:
+
+    # Telegram 1024 belgilik caption limitini teglarsiz sof ko'rinadigan matn bo'yicha hisoblaydi
+    visible_text = re.sub(r'<[^>]+>', '', full)
+    if len(visible_text) <= max_len:
         return full
 
-    # Agar 1024 dan oshsa, footerni to'liq saqlab, captionni qisqartiramiz
-    reserved_footer_len = len(footer_text) + 6 if footer_text else 0
+    # Agar ko'rinadigan matn 1024 dan oshsa, footerni to'liq saqlab, captionni qisqartiramiz
+    reserved_footer_len = len(re.sub(r'<[^>]+>', '', footer_text)) + 6 if footer_text else 0
     target_caption_len = max_len - reserved_footer_len
     if target_caption_len <= 150:
         target_caption_len = max_len - 10

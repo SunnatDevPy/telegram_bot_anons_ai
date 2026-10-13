@@ -217,7 +217,8 @@ def get_topic_priority(title: str, summary: str = "", category: str = "") -> int
     score = 0
     combined = f"{title} {summary} {category}".lower()
 
-    if "ai" in category.lower() or "startup" in category.lower():
+    cat_lower = category.lower()
+    if any(k in cat_lower for k in ["ai", "startup", "intellekt", "modellar", "llm", "deepmind", "openai"]):
         score += 50
 
     for kw in AI_STARTUP_PRIORITY_KEYWORDS:

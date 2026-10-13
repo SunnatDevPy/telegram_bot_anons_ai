@@ -58,19 +58,26 @@ def render_emojis_panel_text() -> str:
     return "\n".join(lines)
 
 def get_emojis_keyboard() -> InlineKeyboardMarkup:
-    """Premium Emojilar menyusi tugmalari"""
+    """Premium Emojilar menyusi tugmalari (har bir bo'lim uchun faol holat ko'rsatiladi)"""
+    def btn_label(key: str) -> str:
+        meta = EMOJI_METADATA.get(key, {"name": key, "default": "✨"})
+        eid = config.PREMIUM_EMOJIS.get(key, "").strip()
+        if eid and eid.isdigit():
+            return f"{meta['default']} {meta['name']} ✅"
+        return f"{meta['default']} {meta['name']} (Standart)"
+
     kb = [
         [
-            InlineKeyboardButton(text="⚡️ Chaqmoq", callback_data="edit_emoji:lightning"),
-            InlineKeyboardButton(text="📌 Mohiyati", callback_data="edit_emoji:pin"),
+            InlineKeyboardButton(text=btn_label("lightning"), callback_data="edit_emoji:lightning"),
+            InlineKeyboardButton(text=btn_label("pin"), callback_data="edit_emoji:pin"),
         ],
         [
-            InlineKeyboardButton(text="📊 Tafsilotlar", callback_data="edit_emoji:chart"),
-            InlineKeyboardButton(text="💡 Xulosa", callback_data="edit_emoji:bulb"),
+            InlineKeyboardButton(text=btn_label("chart"), callback_data="edit_emoji:chart"),
+            InlineKeyboardButton(text=btn_label("bulb"), callback_data="edit_emoji:bulb"),
         ],
         [
-            InlineKeyboardButton(text="📡 Manba", callback_data="edit_emoji:antenna"),
-            InlineKeyboardButton(text="🏷 Hashtag", callback_data="edit_emoji:tag"),
+            InlineKeyboardButton(text=btn_label("antenna"), callback_data="edit_emoji:antenna"),
+            InlineKeyboardButton(text=btn_label("tag"), callback_data="edit_emoji:tag"),
         ],
         [
             InlineKeyboardButton(text="🔄 Barchasini standartga qaytarish", callback_data="reset_all_emojis")

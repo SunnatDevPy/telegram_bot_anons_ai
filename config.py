@@ -74,19 +74,34 @@ POST_SPACING_MINUTES = int(os.getenv("POST_SPACING_MINUTES", "10"))
 # Sara IT, AI, startaplar va texno-kompaniyalar RSS manbalari (AI va Startaplar 1-o'rinda)
 RSS_SOURCES = [
     {
+        "name": "Google AI Blog",
+        "url": "https://blog.google/technology/ai/rss/",
+        "category": "AI Modellar & Google DeepMind"
+    },
+    {
+        "name": "OpenAI News",
+        "url": "https://openai.com/news/rss.xml",
+        "category": "AI Modellar & OpenAI"
+    },
+    {
         "name": "TechCrunch AI",
         "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
         "category": "AI Kompaniyalar & Startaplar"
     },
     {
-        "name": "TechCrunch Startups",
-        "url": "https://techcrunch.com/category/startups/feed/",
-        "category": "IT & Texno Startaplar"
-    },
-    {
         "name": "The Decoder",
         "url": "https://the-decoder.com/feed/",
         "category": "AI Modellar & Tadqiqotlar"
+    },
+    {
+        "name": "MarkTechpost",
+        "url": "https://www.marktechpost.com/feed/",
+        "category": "AI Tadqiqotlar & LLM"
+    },
+    {
+        "name": "TechCrunch Startups",
+        "url": "https://techcrunch.com/category/startups/feed/",
+        "category": "IT & Texno Startaplar"
     },
     {
         "name": "The Verge",
