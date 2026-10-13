@@ -75,7 +75,7 @@ POST_SPACING_MINUTES = int(os.getenv("POST_SPACING_MINUTES", "10"))
 RSS_SOURCES = [
     {
         "name": "Google AI Blog",
-        "url": "https://blog.google/technology/ai/rss/",
+        "url": "https://blog.google/innovation-and-ai/technology/ai/rss/",
         "category": "AI Modellar & Google DeepMind"
     },
     {
