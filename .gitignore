@@ -1,0 +1,25 @@
+# Muhim maxfiy sozlamalar (API kalitlar va tokenlar)
+.env
+
+# SQLite ma'lumotlar bazasi
+*.db
+*.sqlite
+*.sqlite3
+
+# Python bytecode va keshlar
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Muhit va virtualenv
+venv/
+.venv/
+env/
+ENV/
+
+# Tizim va muharrir fayllari
+.vscode/
+.idea/
+*.log
+.DS_Store
+Thumbs.db
