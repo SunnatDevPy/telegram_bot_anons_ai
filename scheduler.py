@@ -4,27 +4,28 @@ from aiogram import Bot
 import config
 import database
 from rss_parser import scan_all_feeds
-from ai_formatter import format_news
+from ai_formatter import format_news, safe_telegram_caption
 from bot_handlers import get_moderation_keyboard
 
 async def send_to_channel(bot: Bot, image_url: str, caption: str):
     """Kanalga rasm yoki matnli xabarni chop etish"""
-    full_caption = caption + config.CHANNEL_FOOTER
+    full_photo_caption = safe_telegram_caption(caption, config.CHANNEL_FOOTER, max_len=1024)
     if image_url:
         try:
             await bot.send_photo(
                 chat_id=config.CHANNEL_ID,
                 photo=image_url,
-                caption=full_caption[:1024],
+                caption=full_photo_caption,
                 parse_mode="HTML"
             )
             return True
         except Exception as e:
             print(f"[Kanal Rasm Xatolik]: {e}. Matnning o'zi yuborilmoqda...")
 
+    text_msg = safe_telegram_caption(caption, config.CHANNEL_FOOTER, max_len=4096)
     await bot.send_message(
         chat_id=config.CHANNEL_ID,
-        text=full_caption[:4096],
+        text=text_msg,
         parse_mode="HTML"
     )
     return True
@@ -32,13 +33,14 @@ async def send_to_channel(bot: Bot, image_url: str, caption: str):
 async def send_draft_to_admin(bot: Bot, admin_id: int, post_id: int, image_url: str, caption: str, original_url: str, source_name: str):
     """Adminga tasdiqlash uchun postni yuborish (to'g'ridan-to'g'ri kanal ko'rinishida)"""
     kb = get_moderation_keyboard(post_id)
+    safe_cap = safe_telegram_caption(caption, max_len=1024)
 
     if image_url:
         try:
             await bot.send_photo(
                 chat_id=admin_id,
                 photo=image_url,
-                caption=caption[:1024],
+                caption=safe_cap,
                 parse_mode="HTML",
                 reply_markup=kb
             )

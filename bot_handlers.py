@@ -10,7 +10,7 @@ from aiogram.filters import Command
 
 import config
 import database
-from ai_formatter import regenerate_news
+from ai_formatter import regenerate_news, safe_telegram_caption
 
 router = Router()
 
@@ -499,8 +499,9 @@ async def cb_publish_post(call: CallbackQuery, bot: Bot):
         await call.answer("Ushbu post allaqachon chiqarilgan yoki topilmadi!", show_alert=True)
         return
 
-    caption = post["uz_caption"] + config.CHANNEL_FOOTER
     now_str = datetime.now(timezone.utc).isoformat()
+    photo_caption = safe_telegram_caption(post["uz_caption"], config.CHANNEL_FOOTER, max_len=1024)
+    text_message = safe_telegram_caption(post["uz_caption"], config.CHANNEL_FOOTER, max_len=4096)
 
     try:
         sent_successfully = False
@@ -509,7 +510,7 @@ async def cb_publish_post(call: CallbackQuery, bot: Bot):
                 await bot.send_photo(
                     chat_id=config.CHANNEL_ID,
                     photo=post["image_url"],
-                    caption=caption[:1024],
+                    caption=photo_caption,
                     parse_mode="HTML"
                 )
                 sent_successfully = True
@@ -522,7 +523,7 @@ async def cb_publish_post(call: CallbackQuery, bot: Bot):
         if not sent_successfully:
             await bot.send_message(
                 chat_id=config.CHANNEL_ID,
-                text=caption[:4096],
+                text=text_message,
                 parse_mode="HTML"
             )
 
@@ -530,9 +531,10 @@ async def cb_publish_post(call: CallbackQuery, bot: Bot):
         await call.answer("Kanalga muvaffaqiyatli chiqarildi! 🚀", show_alert=False)
 
         full_done = f"✅ <b>KANALGA CHIQARILDI!</b>\n\n{post['uz_caption']}"
+        done_photo_caption = safe_telegram_caption(full_done, max_len=1024)
         if call.message.caption:
             await call.message.edit_caption(
-                caption=full_done[:1024],
+                caption=done_photo_caption,
                 parse_mode="HTML",
                 reply_markup=None
             )

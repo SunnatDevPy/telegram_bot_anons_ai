@@ -232,6 +232,45 @@ def fix_blockquote_tags(t: str) -> str:
 
     return t.strip()
 
+def safe_telegram_caption(caption: str, footer: str = "", max_len: int = 1024) -> str:
+    """Caption va footerni max_len belgidan oshirmasdan va ochiq HTML teglarni buzmasdan xavfsiz tayyorlash"""
+    footer_text = footer if footer else ""
+    full = (caption.strip() + "\n\n" + footer_text.strip()) if footer_text else caption.strip()
+    if len(full) <= max_len:
+        return full
+
+    # Agar 1024 dan oshsa, footerni to'liq saqlab, captionni qisqartiramiz
+    reserved_footer_len = len(footer_text) + 6 if footer_text else 0
+    target_caption_len = max_len - reserved_footer_len
+    if target_caption_len <= 150:
+        target_caption_len = max_len - 10
+        footer_text = ""
+
+    trimmed = caption[:target_caption_len]
+    last_break = max(trimmed.rfind('\n\n'), trimmed.rfind('\n'), trimmed.rfind(' '))
+    if last_break > 100:
+        trimmed = trimmed[:last_break]
+
+    # Ochiq qolgan <a> yoki <tg-emoji> teglarini tozalash
+    if trimmed.rfind("<a") > trimmed.rfind("</a>"):
+        trimmed = trimmed[:trimmed.rfind("<a")].rstrip()
+
+    if trimmed.rfind("<tg-emoji") > trimmed.rfind("</tg-emoji>"):
+        trimmed = trimmed[:trimmed.rfind("<tg-emoji")].rstrip()
+
+    # Ochiq qolgan teglarni yopish
+    if trimmed.count("<b>") > trimmed.count("</b>"):
+        trimmed += "</b>"
+    if trimmed.count("<i>") > trimmed.count("</i>"):
+        trimmed += "</i>"
+    if "<blockquote" in trimmed and "</blockquote>" not in trimmed:
+        trimmed += "</blockquote>"
+
+    result = trimmed.strip()
+    if footer_text:
+        result += "\n\n" + footer_text.strip()
+    return result[:max_len]
+
 async def fallback_formatter(title: str, summary: str, source_name: str, original_url: str = "") -> str:
     """Gemini ishlamagan taqdirda o'zbekcha tarjima qilib, ochiluvchi sitata (blockquote expandable) bilan xavfsiz formatlash"""
     clean_title = clean_ugly_symbols(title)
@@ -278,7 +317,7 @@ async def format_news(title: str, summary: str, source_name: str, category: str 
     """Yangilikni o'zbek tiliga professional sarlavha, qisqa mohiyat va ochiluvchi sitata bilan tayyorlash"""
     client = get_gemini_client()
 
-    prompt = f"""Sen — "Grand Mobile Anons" Telegram kanali uchun yetakchi IT va AI tahlilchisisan.
+    prompt = f"""Sen — "{config.CHANNEL_USERNAME}" Telegram kanali uchun yetakchi IT va AI tahlilchisisan.
 Quyidagi xabarni o'zbek tilida juda aniq, jozibador qilib qayta yoz.
 
 Sarlavha: {title}
