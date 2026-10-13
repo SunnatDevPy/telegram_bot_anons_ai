@@ -70,6 +70,52 @@ async def extract_og_image(url: str, client: httpx.AsyncClient) -> Optional[str]
         pass
     return None
 
+DEAL_KEYWORDS = [
+    "deal", "deals", "save $", "save £", "save €", "discount", "discounts",
+    "on sale", "price drop", "price cut", "coupon", "promo code", "chegirma",
+    "lowest price", "all-time low", "record low", "buying guide", "gift guide",
+    "best buy", "amazon deal", "prime day", "black friday", "cyber monday",
+    "for only $", "for just $", "now $", "off at amazon", "off on amazon",
+    "% off", "percent off", "drops to $", "steep discount", "bargain",
+    "historic low", "cashback", "special offer", "clearance", "promo",
+    "buy now for", "sale alert", "price slashed", "bundle deal"
+]
+
+DEAL_URL_PATTERNS = [
+    "/deals/", "/deal/", "/sales/", "/coupons/", "/buying-guide",
+    "/shopping/", "/best-deals", "/affiliate", "/discounts/"
+]
+
+def is_commercial_deal(title: str, url: str = "", summary: str = "") -> bool:
+    """Do'kon aksiyalari, chegirmalar va savdo reklamalarini aniqlash va chetlab o'tish"""
+    title_lower = title.lower()
+    url_lower = url.lower()
+    summary_lower = summary.lower() if summary else ""
+
+    # 1. URL bo'yicha
+    if any(p in url_lower for p in DEAL_URL_PATTERNS):
+        return True
+
+    # 2. Sarlavhadagi iboralar bo'yicha
+    if any(kw in title_lower for kw in DEAL_KEYWORDS):
+        return True
+
+    # 3. Regex bo'yicha ($... off yoki save $...)
+    if re.search(r'\$\d+[\s\w]*(?:off|save|discount|chegirma)', title_lower):
+        return True
+    if re.search(r'\b\d+%\s+off\b', title_lower):
+        return True
+    if re.search(r'\b(?:save|saving|saved)\s+\$\d+', title_lower):
+        return True
+    if re.search(r'\b(?:historic|massive|record|big)\s+(?:\$\d+|discount|price cut)', title_lower):
+        return True
+
+    # 4. Qisqa xulosada agar faqat narx aksiyasi bo'lsa
+    if "save $" in summary_lower or "use coupon" in summary_lower or "at its lowest price" in summary_lower:
+        return True
+
+    return False
+
 def clean_html(raw_html: str) -> str:
     """HTML teglarini tozalash va toza matn qaytarish"""
     if not raw_html:
@@ -94,13 +140,16 @@ async def fetch_feed_entries(source: Dict[str, str], client: httpx.AsyncClient, 
                 continue
 
             clean_title = clean_html(title)
+            raw_summary = getattr(entry, "summary", "") or ""
+            summary = clean_html(raw_summary)
+
+            # Do'kon chegirmalari, aksiyalar va savdo reklamalarini chetlab o'tish
+            if is_commercial_deal(clean_title, link, summary):
+                continue
+
             # Bazada bormi yoki o'xshash mavzu chiqdimi tekshirish
             if await is_duplicate_news(link, clean_title):
                 continue
-
-            # Xulosa matnini tozalash
-            raw_summary = getattr(entry, "summary", "") or ""
-            summary = clean_html(raw_summary)
 
             # Rasm topish
             img_url = extract_image_from_entry(entry)
