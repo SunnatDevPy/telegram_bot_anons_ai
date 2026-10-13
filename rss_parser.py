@@ -70,6 +70,37 @@ async def extract_og_image(url: str, client: httpx.AsyncClient) -> Optional[str]
         pass
     return None
 
+def upgrade_image_url(url: Optional[str]) -> Optional[str]:
+    """Kichik pikselli yoki past sifatli thumbnail rasmlarni original Full HD sifatiga ko'tarish"""
+    if not url:
+        return None
+    clean = url.strip()
+    
+    # 1. GSMArena: masalan .../-184x111/gsmarena_001.jpg -> .../inline/gsmarena_001.jpg
+    if "gsmarena.com" in clean:
+        clean = re.sub(r'/-\d+x\d+/', '/inline/', clean)
+        clean = re.sub(r'/thumb/', '/inline/', clean)
+
+    # 2. WordPress / TechCrunch / ArsTechnica: masalan ...-150x150.jpg -> ....jpg
+    clean = re.sub(r'-\d{2,4}x\d{2,4}\.(jpg|jpeg|png|webp)', r'.\1', clean, flags=re.IGNORECASE)
+    
+    # Agar resize yoki w= parametr bo'lsa, original o'lchamini olish
+    if "resize=" in clean or "fit=" in clean:
+        clean = re.sub(r'\?(?:resize|fit|w|h|crop)=[^&]+(&.*)?$', '', clean)
+
+    return clean
+
+def is_low_res_url(url: Optional[str]) -> bool:
+    """Rasm o'lchami kichik thumbnail ekanligini aniqlash"""
+    if not url:
+        return True
+    low_markers = [
+        "-184x111", "-150x150", "-100x100", "-300x",
+        "thumbnail", "/thumb/", "avatar", "small", "160x", "184x"
+    ]
+    u = url.lower()
+    return any(m in u for m in low_markers)
+
 DEAL_KEYWORDS = [
     "deal", "deals", "save $", "save £", "save €", "discount", "discounts",
     "on sale", "price drop", "price cut", "coupon", "promo code", "chegirma",
@@ -151,10 +182,13 @@ async def fetch_feed_entries(source: Dict[str, str], client: httpx.AsyncClient, 
             if await is_duplicate_news(link, clean_title):
                 continue
 
-            # Rasm topish
+            # Rasm topish (Eng sifatli HD rasmni tanlash)
             img_url = extract_image_from_entry(entry)
-            if not img_url:
-                img_url = await extract_og_image(link, client)
+            if not img_url or is_low_res_url(img_url):
+                og_img = await extract_og_image(link, client)
+                if og_img:
+                    img_url = og_img
+            img_url = upgrade_image_url(img_url)
 
             results.append({
                 "source_name": source["name"],

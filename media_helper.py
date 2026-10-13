@@ -12,59 +12,104 @@ HEADERS = {
     )
 }
 
+import os
 import io
 from PIL import Image, ImageDraw, ImageFont
 
+FONT_PATHS = [
+    os.path.join(os.path.dirname(__file__), "assets", "font.ttf"),
+    "assets/font.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "C:\\Windows\\Fonts\\arialbd.ttf",
+    "C:\\Windows\\Fonts\\arial.ttf",
+]
+
+def get_watermark_font(size: int) -> ImageFont.ImageFont:
+    """Tiniq TrueType shriftni yuklash"""
+    for path in FONT_PATHS:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
+    try:
+        return ImageFont.truetype("arial.ttf", size)
+    except Exception:
+        return ImageFont.load_default()
+
 def apply_watermark(image_bytes: bytes) -> bytes:
-    """Rasmning pastki o'ng burchagiga estetik NeuraTech suv belgisi (Watermark) qo'yish"""
+    """Rasmning pastki o'ng burchagiga estetik, tiniq va zamonaviy NeuraTech suv belgisi (Watermark) qo'yish"""
     try:
         base_img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
         width, height = base_img.size
 
+        # Kichik o'lchamli rasmlarga watermark qo'yilmaydi
         if width < 300 or height < 200:
-            return image_bytes
+            out_io = io.BytesIO()
+            base_img.convert("RGB").save(out_io, format="JPEG", quality=95, subsampling=0)
+            return out_io.getvalue()
 
         overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
-        text = "⚡️ NeuraTech | @neuratech_uz"
-        font_size = max(13, int(min(width, height) * 0.034))
-        try:
-            font = ImageFont.truetype("arial.ttf", font_size)
-        except Exception:
-            font = ImageFont.load_default()
+        # Matn va shrift o'lchami rasm hajmiga mutanosib (aniq va tiniq)
+        font_size = max(16, int(min(width, height) * 0.038))
+        font = get_watermark_font(font_size)
 
+        text = "NeuraTech  |  @neuratech_uz"
         bbox = draw.textbbox((0, 0), text, font=font)
         text_w = bbox[2] - bbox[0]
         text_h = bbox[3] - bbox[1]
 
-        padding_x = int(font_size * 0.7)
-        padding_y = int(font_size * 0.4)
-        pill_w = text_w + padding_x * 2
-        pill_h = text_h + padding_y * 2
+        # Vektorli chaqmoq (⚡️) piktogrammasi o'lchamlari
+        icon_w = int(font_size * 0.75)
+        icon_h = int(font_size * 1.05)
+        icon_spacing = int(font_size * 0.35)
 
-        margin = int(min(width, height) * 0.03)
+        pad_x = int(font_size * 0.85)
+        pad_y = int(font_size * 0.45)
+
+        total_content_w = icon_w + icon_spacing + text_w
+        pill_w = total_content_w + pad_x * 2
+        pill_h = max(text_h, icon_h) + pad_y * 2
+
+        margin = max(18, int(min(width, height) * 0.035))
         x2 = width - margin
         y2 = height - margin
         x1 = x2 - pill_w
         y1 = y2 - pill_h
 
-        # Shaffof qoramtir hoshiyali fon
+        # 1. Zamonaviy qora shisha fon (Glassmorphism badge) va neon hoshiya
         draw.rounded_rectangle(
             (x1, y1, x2, y2),
             radius=int(pill_h / 2),
-            fill=(12, 18, 30, 185),
-            outline=(0, 210, 255, 140),
-            width=1
+            fill=(10, 15, 26, 220),
+            outline=(0, 210, 255, 190),
+            width=2
         )
 
-        text_x = x1 + padding_x
-        text_y = y1 + padding_y - (bbox[1] if bbox[1] < 0 else 0)
-        draw.text((text_x, text_y), text, font=font, fill=(255, 255, 255, 240))
+        # 2. Tiniq vektor chaqmoq belgisi (Neon Cyan)
+        ix = x1 + pad_x
+        iy = y1 + pad_y + (max(text_h, icon_h) - icon_h) // 2
+        bolt_points = [
+            (ix + icon_w * 0.65, iy),
+            (ix + icon_w * 0.15, iy + icon_h * 0.52),
+            (ix + icon_w * 0.52, iy + icon_h * 0.52),
+            (ix + icon_w * 0.35, iy + icon_h),
+            (ix + icon_w * 0.90, iy + icon_h * 0.42),
+            (ix + icon_w * 0.55, iy + icon_h * 0.42),
+        ]
+        draw.polygon(bolt_points, fill=(0, 235, 255, 255))
+
+        # 3. Tiniq oq yozuv
+        tx = ix + icon_w + icon_spacing
+        ty = y1 + pad_y - bbox[1] + (max(text_h, icon_h) - text_h) // 2
+        draw.text((tx, ty), text, font=font, fill=(255, 255, 255, 255))
 
         combined = Image.alpha_composite(base_img, overlay).convert("RGB")
         out_io = io.BytesIO()
-        combined.save(out_io, format="JPEG", quality=90)
+        # Maksimal sifat (quality=95 va subsampling=0) bilan saqlash (matn qirralari xira bo'lmaydi)
+        combined.save(out_io, format="JPEG", quality=95, subsampling=0)
         return out_io.getvalue()
     except Exception as e:
         print(f"[Watermark xatolik]: {e}")

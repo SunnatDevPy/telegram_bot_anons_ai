@@ -348,3 +348,20 @@ async def get_today_published_posts(date_prefix: str, limit: int = 5) -> List[Di
         """, (pattern, limit)) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
+
+async def cleanup_old_posts(days: int = 45):
+    """Eski postlarni tozalash va disk hajmini siqish (joy to'lib ketmasligi uchun)"""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rejected_cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    try:
+        async with get_db() as db:
+            # 1. 14 kundan oshgan bekor qilingan (rejected) xabarlarni o'chirish
+            await db.execute("DELETE FROM posts WHERE status = 'rejected' AND created_at < ?", (rejected_cutoff,))
+            # 2. 45 kundan oshgan arxiv postlarni tozalash
+            await db.execute("DELETE FROM posts WHERE status = 'published' AND created_at < ?", (cutoff,))
+            await db.commit()
+            # 3. Disk hajmini bo'shatish (VACUUM)
+            await db.execute("VACUUM")
+            await db.commit()
+    except Exception as e:
+        print(f"[DB Cleanup Xatolik]: {e}")

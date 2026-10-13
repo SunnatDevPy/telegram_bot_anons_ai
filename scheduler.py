@@ -236,14 +236,23 @@ async def process_news_cycle(bot: Bot) -> int:
 
     return processed_count
 
+last_cleanup_date = None
+
 async def run_scheduler_worker(bot: Bot):
     """Fon rejimida doimiy ishlovchi sikl"""
+    global last_cleanup_date
     print("⏳ Fon yangiliklar kuzatuvchisi ishga tushdi.")
     while True:
         try:
             await process_news_cycle(bot)
         except Exception as e:
             print(f"[Scheduler Sikl Xatolik]: {e}")
+
+        # Kuniga bir marta eski arxivni tozalash (disk va baza to'lib ketmasligi uchun)
+        now_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if last_cleanup_date != now_date:
+            last_cleanup_date = now_date
+            await database.cleanup_old_posts(days=45)
 
         raw_interval = await database.get_setting("interval_minutes", "25")
         interval_minutes = int(raw_interval) if raw_interval and raw_interval.isdigit() else 25
