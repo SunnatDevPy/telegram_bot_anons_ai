@@ -1,5 +1,5 @@
 import html
-from typing import Optional, Union
+from typing import Optional, Union, Any
 import httpx
 from aiogram import Bot
 from aiogram.types import BufferedInputFile, InlineKeyboardMarkup
