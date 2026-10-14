@@ -44,11 +44,12 @@ flowchart LR
 ---
 
 ### 3-Bosqich: 💾 Ma'lumotlar Bazasini Avto-Zaxiralash (Telegram Backup)
-> **Maqsad:** Server kutilmaganda buzilsa yoki o'chib ketsa ham, barcha postlar tarixi va bot mijozlari ro'yxatini 100% xavfsiz saqlash.
+> **Holati:** ✅ Bajarildi va Serverda Faol
 
-- [ ] **Kunlik Avto-Backup:** Har kecha Toshkent vaqti bilan soat 03:00 da `bot_data.db` faylini adminga shaxsiy xabar qilib jo'natish.
-- [ ] **`/backup` buyrug'i:** Admin istalgan vaqtda bitta buyruq orqali bazaning eng so'nggi nusxasini yuklab olishi.
-- [ ] Fayl hajmini tejash uchun avtomatik `.zip` yoki `.gz` siqish.
+- [x] **Kunlik Avto-Backup:** Har kecha Toshkent vaqti bilan soat 03:00 da `bot_data.db` faylini adminga shaxsiy xabar qilib jo'natish.
+- [x] **`/backup` buyrug'i:** Admin istalgan vaqtda bitta buyruq orqali bazaning eng so'nggi nusxasini yuklab olishi.
+- [x] **Admin panelda tugma:** `💾 Baza Nusxasi (/backup)` tugmasi orqali to'g'ridan-to'g'ri Telegram chatga yuklab olish.
+- [x] **ACID Online Snapshot & ZIP Siqish:** Baza ishlayotgan paytda buzilishlarsiz xavfsiz nusxa olish va hajmini 80-90% gacha siqish.
 
 ---
 

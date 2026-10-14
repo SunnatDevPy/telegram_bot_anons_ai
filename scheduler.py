@@ -12,6 +12,7 @@ from ai_formatter import format_news, safe_telegram_caption, generate_daily_dige
 from bot_handlers import get_moderation_keyboard, get_channel_post_keyboard
 from media_helper import send_media_robust
 from diagnostics import send_admin_alert
+from backup_service import check_daily_backup
 
 def is_night_mode_active() -> bool:
     """Toshkent vaqti bo'yicha tungi tinchlik rejimi faolmi (23:30 dan 07:30 gacha)"""
@@ -369,6 +370,7 @@ async def run_scheduler_worker(bot: Bot):
                 try:
                     await check_due_scheduled_posts(bot)
                     await check_daily_digest(bot)
+                    await check_daily_backup(bot)
                 except Exception as sub_e:
                     print(f"[Scheduler Oraliq Tekshiruv Xatolik]: {sub_e}")
         except Exception as outer_e:

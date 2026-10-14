@@ -55,6 +55,9 @@ NIGHT_MODE_END_MINUTE = 30
 # Kechki Dayjest vaqti (Toshkent vaqti bilan soat 21:00)
 DAILY_DIGEST_HOUR = 21
 
+# Baza Avto-Zaxiralash vaqti (Toshkent vaqti bilan tungi soat 03:00)
+BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "3"))
+
 LOGO_PATH = BASE_DIR / "neuratech_logo.jpg"
 DB_PATH = BASE_DIR / "bot_data.db"
 

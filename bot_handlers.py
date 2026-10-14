@@ -105,10 +105,11 @@ def get_admin_keyboard(mode: str, interval: int, buttons_enabled: bool = True) -
             InlineKeyboardButton(text="⏱ 60 min", callback_data="set_interval:60"),
         ],
         [
-            InlineKeyboardButton(text=buttons_btn_text, callback_data="toggle_channel_buttons")
+            InlineKeyboardButton(text="🔘 Kanal tugmalari: 🟢 Faol" if buttons_enabled else "🔘 Kanal tugmalari: 🔴 O'chirilgan", callback_data="toggle_channel_buttons")
         ],
         [
-            InlineKeyboardButton(text="📊 Tizim Holati (/status)", callback_data="view_bot_status")
+            InlineKeyboardButton(text="📊 Holat (/status)", callback_data="view_bot_status"),
+            InlineKeyboardButton(text="💾 Baza Nusxasi (/backup)", callback_data="admin_download_backup")
         ],
         [
             InlineKeyboardButton(text="✨ Premium Emojilarni sozlash", callback_data="admin_emojis_menu")
@@ -199,6 +200,7 @@ async def format_panel_text() -> str:
     gemini_status = "🟢 Ulangan (Multi-Key)" if config.GEMINI_API_KEY else "🔴 Kalit kiritilmagan (.env)"
 
     mode_display = "🟢 Avtomatik (Kanalga to'g'ridan-to'g'ri)" if mode == "auto" else "🟡 Moderatsiya (Tasdiqlash bilan)"
+    last_backup = await database.get_setting("last_backup_timestamp", "Hali olinmagan")
 
     text = (
         "🤖 <b>NeuraTech AI — IT & AI Yangiliklar Boshqaruvi</b>\n\n"
@@ -206,6 +208,7 @@ async def format_panel_text() -> str:
         f"• <b>Rejim:</b> {mode_display}\n"
         f"• <b>Vaqt oralig'i:</b> Har {interval} daqiqada\n"
         f"• <b>Kanal tugmalari:</b> {buttons_display}\n"
+        f"• <b>Oxirgi zaxira (Backup):</b> <code>{last_backup}</code>\n"
         f"• <b>Kanal:</b> <code>{config.CHANNEL_ID}</code> (<a href='{config.CHANNEL_LINK}'>{config.CHANNEL_USERNAME}</a>)\n"
         f"• <b>Google Gemini AI:</b> {gemini_status}\n\n"
         f"📊 <b>Statistika:</b>\n"
@@ -361,6 +364,22 @@ async def cmd_status(message: Message, bot: Bot):
     except Exception:
         pass
     await message.answer(report, parse_mode="HTML", reply_markup=kb)
+
+@router.message(Command("backup"))
+async def cmd_backup(message: Message, bot: Bot):
+    if not await check_is_admin(message.from_user.id):
+        await message.reply("Kechirasiz, ushbu buyruq faqat bot ma'muri uchun.")
+        return
+
+    wait_msg = await message.answer("⏳ <i>Baza zaxira nusxasi tayyorlanmoqda va siqilmoqda...</i>", parse_mode="HTML")
+    from backup_service import send_database_backup
+    success = await send_database_backup(bot=bot, admin_id=message.from_user.id, is_automatic=False)
+    try:
+        await wait_msg.delete()
+    except Exception:
+        pass
+    if not success:
+        await message.answer("❌ Zaxira nusxasini tayyorlashda xatolik yuz berdi.")
 
 # ==================== FOYDALANUVCHILAR (MIJOZLAR) UCHUN BO'LIM ====================
 
@@ -795,6 +814,17 @@ async def cb_refresh_bot_status(call: CallbackQuery, bot: Bot):
         await call.message.edit_text(report, parse_mode="HTML", reply_markup=kb)
     except Exception:
         pass
+
+@router.callback_query(F.data == "admin_download_backup")
+async def cb_admin_download_backup(call: CallbackQuery, bot: Bot):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+    await call.answer("Baza zaxira nusxasi tayyorlanmoqda... ⏳", show_alert=False)
+    from backup_service import send_database_backup
+    success = await send_database_backup(bot=bot, admin_id=call.from_user.id, is_automatic=False)
+    if not success:
+        await call.message.answer("❌ Zaxira nusxasini tayyorlashda xatolik yuz berdi.")
 
 # ==================== PREMIUM EMOJI BOSHQARUVI ====================
 
