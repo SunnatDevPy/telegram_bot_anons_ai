@@ -40,6 +40,17 @@ async def main():
             pass
         except Exception as err:
             logger.critical(f"Scheduler vazifasi kutilmaganda to'xtadi: {err}", exc_info=True)
+            try:
+                import html
+                from diagnostics import send_admin_alert
+                asyncio.create_task(send_admin_alert(
+                    bot=bot,
+                    message=f"🚨 <b>Kritik Xatolik:</b> Scheduler kuzatuvchi vazifasi to'xtadi:\n<code>{html.escape(str(err))}</code>",
+                    alert_type="scheduler_died",
+                    cooldown_minutes=10
+                ))
+            except Exception:
+                pass
 
     scheduler_task = asyncio.create_task(run_scheduler_worker(bot))
     scheduler_task.add_done_callback(on_scheduler_done)

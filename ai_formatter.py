@@ -8,6 +8,8 @@ from google import genai
 from google.genai import types
 import config
 
+LAST_FORMATTER_USED = "gemini"
+
 def get_all_clients() -> list:
     """Barcha mavjud API kalitlar uchun mijozlar ro'yxatini shakllantirish (Multi-Key Pool)"""
     keys = config.get_gemini_api_keys()
@@ -417,13 +419,16 @@ QOIDALAR:
 6. Telegram caption limiti 1024 belgi! Jami matn uzunligi 700-850 belgi bo'lsin.
 """
 
+    global LAST_FORMATTER_USED
     raw_text = await execute_gemini_prompt(prompt)
     if raw_text:
         cleaned = sanitize_telegram_html(raw_text)
         cleaned = fix_blockquote_tags(cleaned)
         cleaned = format_paragraph_spacing(cleaned)
+        LAST_FORMATTER_USED = "gemini"
         return apply_premium_emojis(cleaned)
 
+    LAST_FORMATTER_USED = "fallback"
     return await fallback_formatter(title, summary, source_name, original_url)
 
 async def regenerate_news(title: str, summary: str, current_caption: str) -> str:

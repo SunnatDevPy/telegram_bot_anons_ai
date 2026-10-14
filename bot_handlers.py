@@ -12,6 +12,7 @@ import config
 import database
 from ai_formatter import regenerate_news, safe_telegram_caption, answer_ai_assistant_question
 from media_helper import send_media_robust, send_user_preview_media
+from diagnostics import get_system_health, format_health_html
 
 router = Router()
 
@@ -99,6 +100,9 @@ def get_admin_keyboard(mode: str, interval: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="⏱ 15 min", callback_data="set_interval:15"),
             InlineKeyboardButton(text="⏱ 30 min", callback_data="set_interval:30"),
             InlineKeyboardButton(text="⏱ 60 min", callback_data="set_interval:60"),
+        ],
+        [
+            InlineKeyboardButton(text="📊 Tizim Holati (/status)", callback_data="view_bot_status")
         ],
         [
             InlineKeyboardButton(text="✨ Premium Emojilarni sozlash", callback_data="admin_emojis_menu")
@@ -262,6 +266,24 @@ async def cmd_admin(message: Message):
     mode = await database.get_setting("mode", "moderation")
     interval = int(await database.get_setting("interval_minutes", "25"))
     await message.answer(text, parse_mode="HTML", reply_markup=get_admin_keyboard(mode, interval))
+
+@router.message(Command("status", "health"))
+async def cmd_status(message: Message, bot: Bot):
+    if not await check_is_admin(message.from_user.id):
+        await message.reply("Kechirasiz, ushbu buyruq faqat bot ma'muri uchun.")
+        return
+    wait_msg = await message.answer("⏳ <i>Tizim parametrlari va Gemini kalitlari tekshirilmoqda...</i>", parse_mode="HTML")
+    health_data = await get_system_health(bot=bot, force_refresh=True)
+    report = format_health_html(health_data)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Qayta tekshirish", callback_data="refresh_bot_status")],
+        [InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")]
+    ])
+    try:
+        await wait_msg.delete()
+    except Exception:
+        pass
+    await message.answer(report, parse_mode="HTML", reply_markup=kb)
 
 # ==================== FOYDALANUVCHILAR (MIJOZLAR) UCHUN BO'LIM ====================
 
@@ -597,6 +619,54 @@ async def cb_refresh_panel(call: CallbackQuery):
     except Exception:
         pass
     await call.answer("Yangilandi ✅")
+
+@router.callback_query(F.data == "view_admin_panel")
+async def cb_view_admin_panel(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+    text = await format_panel_text()
+    mode = await database.get_setting("mode", "moderation")
+    interval = int(await database.get_setting("interval_minutes", "25"))
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_admin_keyboard(mode, interval))
+    except Exception:
+        await call.message.answer(text, parse_mode="HTML", reply_markup=get_admin_keyboard(mode, interval))
+    await call.answer()
+
+@router.callback_query(F.data == "view_bot_status")
+async def cb_view_bot_status(call: CallbackQuery, bot: Bot):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+    await call.answer("Tizim tekshirilmoqda... ⏳")
+    health_data = await get_system_health(bot=bot, force_refresh=False)
+    report = format_health_html(health_data)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Qayta tekshirish", callback_data="refresh_bot_status")],
+        [InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")]
+    ])
+    try:
+        await call.message.edit_text(report, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await call.message.answer(report, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data == "refresh_bot_status")
+async def cb_refresh_bot_status(call: CallbackQuery, bot: Bot):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+    await call.answer("Ma'lumotlar yangilanmoqda... ⏳")
+    health_data = await get_system_health(bot=bot, force_refresh=True)
+    report = format_health_html(health_data)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Qayta tekshirish", callback_data="refresh_bot_status")],
+        [InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")]
+    ])
+    try:
+        await call.message.edit_text(report, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
 
 # ==================== PREMIUM EMOJI BOSHQARUVI ====================
 

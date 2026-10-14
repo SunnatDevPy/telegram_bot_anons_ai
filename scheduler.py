@@ -1,13 +1,16 @@
+import html
 import asyncio
 from datetime import datetime, timezone, timedelta, time
 from aiogram import Bot
 from aiogram.types import FSInputFile
 import config
 import database
+import ai_formatter
 from rss_parser import scan_all_feeds
 from ai_formatter import format_news, safe_telegram_caption, generate_daily_digest
 from bot_handlers import get_moderation_keyboard
 from media_helper import send_media_robust
+from diagnostics import send_admin_alert
 
 def is_night_mode_active() -> bool:
     """Toshkent vaqti bo'yicha tungi tinchlik rejimi faolmi (23:30 dan 07:30 gacha)"""
@@ -30,24 +33,37 @@ def get_next_morning_time(delay_index: int = 0) -> str:
 
 async def send_to_channel(bot: Bot, image_url: str, caption: str):
     """Kanalga rasm yoki matnli xabarni chop etish"""
-    full_photo_caption = safe_telegram_caption(caption, config.CHANNEL_FOOTER, max_len=1024)
-    if image_url:
-        sent = await send_media_robust(
-            bot=bot,
-            chat_id=config.CHANNEL_ID,
-            media_url=image_url,
-            caption=full_photo_caption
-        )
-        if sent:
-            return True
+    try:
+        full_photo_caption = safe_telegram_caption(caption, config.CHANNEL_FOOTER, max_len=1024)
+        if image_url:
+            sent = await send_media_robust(
+                bot=bot,
+                chat_id=config.CHANNEL_ID,
+                media_url=image_url,
+                caption=full_photo_caption
+            )
+            if sent:
+                return True
 
-    text_msg = safe_telegram_caption(caption, config.CHANNEL_FOOTER, max_len=4096)
-    await bot.send_message(
-        chat_id=config.CHANNEL_ID,
-        text=text_msg,
-        parse_mode="HTML"
-    )
-    return True
+        text_msg = safe_telegram_caption(caption, config.CHANNEL_FOOTER, max_len=4096)
+        await bot.send_message(
+            chat_id=config.CHANNEL_ID,
+            text=text_msg,
+            parse_mode="HTML"
+        )
+        return True
+    except Exception as e:
+        await send_admin_alert(
+            bot=bot,
+            message=(
+                f"🚨 <b>Kanalga post chiqarishda xatolik yuz berdi:</b>\n"
+                f"<code>{html.escape(str(e))}</code>\n\n"
+                f"Iltimos, botning <code>{config.CHANNEL_ID}</code> kanalida administrator ekanligini va post chiqarish huquqini tekshiring."
+            ),
+            alert_type="channel_post_failed",
+            cooldown_minutes=15
+        )
+        raise e
 
 async def send_draft_to_admin(bot: Bot, admin_id: int, post_id: int, image_url: str, caption: str, original_url: str, source_name: str):
     """Adminga tasdiqlash uchun postni yuborish (to'g'ridan-to'g'ri kanal ko'rinishida)"""
@@ -171,6 +187,18 @@ async def process_news_cycle(bot: Bot) -> int:
             category=item.get("category", "IT & AI"),
             original_url=item["url"]
         )
+
+        if getattr(ai_formatter, "LAST_FORMATTER_USED", "") == "fallback":
+            await send_admin_alert(
+                bot=bot,
+                message=(
+                    "⚠️ <b>Google Gemini AI ogohlantirishi:</b>\n"
+                    "Barcha Gemini API kalitlarida kvota tugadi (429) yoki server javob bermadi. "
+                    "Yangiliklar to'xtab qolmasligi uchun avtomatik ravishda <i>Google Translate (Fallback)</i> orqali tayyorlanmoqda."
+                ),
+                alert_type="gemini_fallback",
+                cooldown_minutes=60
+            )
 
         now_str = datetime.now(timezone.utc).isoformat()
 
@@ -303,6 +331,15 @@ async def run_scheduler_worker(bot: Bot):
             await process_news_cycle(bot)
         except Exception as e:
             print(f"[Scheduler Sikl Xatolik]: {e}")
+            try:
+                await send_admin_alert(
+                    bot=bot,
+                    message=f"⚠️ <b>Monitoring siklida kutilmagan xatolik:</b>\n\n<code>{html.escape(str(e)[:250])}</code>",
+                    alert_type="scheduler_cycle_error",
+                    cooldown_minutes=30
+                )
+            except Exception:
+                pass
 
         try:
             # Kuniga bir marta eski arxivni tozalash (disk va baza to'lib ketmasligi uchun)
