@@ -99,13 +99,64 @@ def get_emojis_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
+async def render_feeds_panel_text() -> str:
+    """RSS manbalarini boshqarish paneli matni"""
+    post_counts = await database.get_feed_post_counts()
+    lines = [
+        "📡 <b>NeuraTech — RSS Manbalarini Boshqarish</b>\n",
+        "Quyidagi ro'yxat orqali bot qaysi IT/AI manbalaridan yangilik olayotganini kuzatishingiz va istalgan manbani bir zumda yoqishingiz yoki to'xtatishingiz mumkin.\n",
+        "💡 <i>O'chirilgan manbalarga so'rov yuborilmaydi (server trafigi va 403 bloklari tejaladi).</i>\n"
+    ]
+
+    enabled_count = 0
+    total_count = len(config.RSS_SOURCES)
+
+    for i, src in enumerate(config.RSS_SOURCES, start=1):
+        slug = src.get("slug", src["name"].lower().replace(" ", "_"))
+        is_on = (await database.get_setting(f"feed_{slug}_enabled", "1")) == "1"
+        if is_on:
+            enabled_count += 1
+        icon = "🟢" if is_on else "🔴"
+        status_text = "Faol" if is_on else "O'chirilgan"
+        cnt = post_counts.get(src["name"], 0)
+        lines.append(f"{icon} <b>{i}. {src['name']}</b> ({status_text})")
+        lines.append(f"   ├ 📂 <i>Kategoriya:</i> {src.get('category', 'IT & AI')}")
+        lines.append(f"   └ 📊 <i>Bazadagi postlar:</i> <b>{cnt} ta</b>\n")
+
+    lines.append(f"📊 <b>Umumiy holat:</b> {enabled_count} / {total_count} ta manba faol.")
+    return "\n".join(lines)
+
+async def get_feeds_keyboard() -> InlineKeyboardMarkup:
+    """RSS manbalari uchun 2 ustunli yoqish/o'chirish tugmalari"""
+    buttons = []
+    for src in config.RSS_SOURCES:
+        slug = src.get("slug", src["name"].lower().replace(" ", "_"))
+        is_on = (await database.get_setting(f"feed_{slug}_enabled", "1")) == "1"
+        icon = "🟢" if is_on else "🔴"
+        btn_text = f"{icon} {src['name']}"
+        buttons.append(InlineKeyboardButton(text=btn_text, callback_data=f"toggle_feed:{slug}"))
+
+    # 2 tadan qilib qatorlarga ajratish
+    rows = []
+    for i in range(0, len(buttons), 2):
+        rows.append(buttons[i:i+2])
+
+    rows.append([
+        InlineKeyboardButton(text="🟢 Barchasini yoqish", callback_data="feed_all:enable"),
+        InlineKeyboardButton(text="🔴 Barchasini o'chirish", callback_data="feed_all:disable")
+    ])
+    rows.append([
+        InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")
+    ])
+
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
 def get_admin_keyboard(
     mode: str,
     interval: int,
     source_btn_enabled: bool = False,
     ai_btn_enabled: bool = False,
-    queue_count: int = 0,
-    active_feeds_count: int = 11
+    queue_count: int = 0
 ) -> InlineKeyboardMarkup:
     """Admin boshqaruv paneli tugmalari (Asosiy harakatlar yashil rangda)"""
     mode_btn_text = "🟢 Rejim: Avtomatik (Faol)" if mode == "auto" else "🟡 Rejim: Moderatsiya (Tasdiqlash)"
@@ -115,7 +166,6 @@ def get_admin_keyboard(
     ai_btn_text = "🤖 AI Maslahat: 🟢 Faol" if ai_btn_enabled else "🤖 AI Maslahat: 🔴 O'chirilgan"
 
     queue_btn_text = f"📋 Postlar Navbati ({queue_count} ta)" if queue_count > 0 else "📋 Postlar Navbati (Bo'sh)"
-    feeds_btn_text = f"📡 RSS Manbalar ({active_feeds_count}/{len(config.RSS_SOURCES)})"
 
     kb = [
         [InlineKeyboardButton(text=mode_btn_text, callback_data=f"set_mode:{toggle_mode}")],
@@ -128,11 +178,11 @@ def get_admin_keyboard(
             InlineKeyboardButton(text=queue_btn_text, callback_data="admin_queue:0")
         ],
         [
-            InlineKeyboardButton(text=feeds_btn_text, callback_data="admin_feeds:0")
-        ],
-        [
             InlineKeyboardButton(text=source_btn_text, callback_data="toggle_source_btn"),
             InlineKeyboardButton(text=ai_btn_text, callback_data="toggle_ai_btn")
+        ],
+        [
+            InlineKeyboardButton(text=f"📡 RSS Manbalari ({len(config.RSS_SOURCES)} ta)", callback_data="admin_feeds_menu")
         ],
         [
             InlineKeyboardButton(text="📊 Holat (/status)", callback_data="view_bot_status"),
@@ -257,83 +307,6 @@ async def render_queue_page(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
 
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=kb_buttons)
 
-async def render_feeds_page(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
-    """RSS manbalarini boshqarish matni va paginatsiya tugmalari"""
-    all_sources = config.RSS_SOURCES
-    total_sources = len(all_sources)
-    limit = 6
-    total_pages = max(1, (total_sources + limit - 1) // limit)
-    page = max(0, min(page, total_pages - 1))
-    offset = page * limit
-    page_sources = all_sources[offset:offset + limit]
-
-    posts_count = await database.get_posts_count_by_source()
-
-    active_count = 0
-    statuses = {}
-    for src in all_sources:
-        slug = src.get("slug", "")
-        en = await database.is_feed_enabled(slug)
-        statuses[slug] = en
-        if en:
-            active_count += 1
-
-    lines = [
-        "📡 <b>NeuraTech — RSS Manbalarini Boshqarish</b>\n",
-        "Bu yerda har bir manbani alohida yoqish yoki o'chirish mumkin. O'chirilgan manbalardan yangiliklar olinmaydi.\n",
-        f"📊 Holat: <b>{active_count}/{total_sources} ta faol</b> | Sahifa: <b>{page + 1}/{total_pages}</b>\n"
-    ]
-
-    num_icons = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣"]
-    kb_buttons = []
-
-    for i, src in enumerate(page_sources):
-        slug = src.get("slug", "")
-        name = src.get("name", "Noma'lum")
-        category = src.get("category", "IT")
-        is_en = statuses.get(slug, True)
-        post_cnt = posts_count.get(name, 0)
-        num_icon = num_icons[i] if i < len(num_icons) else f"{offset + i + 1}."
-        status_label = "🟢 Faol" if is_en else "🔴 O'chirilgan"
-
-        lines.append(
-            f"{num_icon} <b>{name}</b> ({status_label})\n"
-            f"   📂 <i>{category}</i>\n"
-            f"   📊 Baza postlari: <b>{post_cnt} ta</b>\n"
-        )
-
-        btn_icon = "🟢" if is_en else "🔴"
-        btn_action = "O'chirish" if is_en else "Yoqish"
-        kb_buttons.append([
-            InlineKeyboardButton(
-                text=f"{btn_icon} {name} ({btn_action})",
-                callback_data=f"toggle_feed:{slug}:{page}"
-            )
-        ])
-
-    nav_row = []
-    if page > 0:
-        nav_row.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"admin_feeds:{page - 1}"))
-    nav_row.append(InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data="ignore_cb"))
-    if page < total_pages - 1:
-        nav_row.append(InlineKeyboardButton(text="Keyingi ➡️", callback_data=f"admin_feeds:{page + 1}"))
-
-    if nav_row:
-        kb_buttons.append(nav_row)
-
-    kb_buttons.append([
-        InlineKeyboardButton(text="⚡️ Barcha manbalarni tekshirish (Ping)", callback_data="ping_feeds")
-    ])
-    kb_buttons.append([
-        InlineKeyboardButton(text="🟢 Barchasini yoqish", callback_data=f"enable_all_feeds:{page}"),
-        InlineKeyboardButton(text="🔄 Yangilash", callback_data=f"admin_feeds:{page}")
-    ])
-    kb_buttons.append([
-        InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")
-    ])
-
-    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=kb_buttons)
-
 async def get_channel_post_keyboard(post_id: Optional[int] = None, original_url: Optional[str] = None) -> Optional[InlineKeyboardMarkup]:
     """Kanalga chiquvchi post ostiga ixcham inline tugmalar bloki (Manba va AI maslahat alohida boshqariladi)"""
     default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", False) else "0"
@@ -376,11 +349,7 @@ async def get_rendered_admin_panel() -> tuple[str, InlineKeyboardMarkup]:
     source_btn_enabled = (await database.get_setting("channel_source_btn", default_src) == "1")
     ai_btn_enabled = (await database.get_setting("channel_ai_btn", default_ai) == "1")
     queue_count = await database.get_scheduled_count()
-    active_feeds = 0
-    for s in config.RSS_SOURCES:
-        if await database.is_feed_enabled(s.get("slug", "")):
-            active_feeds += 1
-    return text, get_admin_keyboard(mode, interval, source_btn_enabled, ai_btn_enabled, queue_count, active_feeds)
+    return text, get_admin_keyboard(mode, interval, source_btn_enabled, ai_btn_enabled, queue_count)
 
 def get_moderation_keyboard(post_id: int) -> InlineKeyboardMarkup:
     """Moderatsiya uchun har bir post ostidagi tugmalar (Asosiy chiqarish tugmasi yashil belgi bilan)"""
@@ -426,12 +395,6 @@ async def format_panel_text() -> str:
     stats = await database.get_stats()
     gemini_status = "🟢 Ulangan (Multi-Key)" if config.GEMINI_API_KEY else "🔴 Kalit kiritilmagan (.env)"
 
-    active_feeds = 0
-    for s in config.RSS_SOURCES:
-        if await database.is_feed_enabled(s.get("slug", "")):
-            active_feeds += 1
-    feed_display = f"{active_feeds}/{len(config.RSS_SOURCES)} ta faol"
-
     mode_display = "🟢 Avtomatik (Kanalga to'g'ridan-to'g'ri)" if mode == "auto" else "🟡 Moderatsiya (Tasdiqlash bilan)"
     last_backup = await database.get_setting("last_backup_timestamp", "Hali olinmagan")
 
@@ -440,7 +403,6 @@ async def format_panel_text() -> str:
         f"⚙️ <b>Sozlamalar:</b>\n"
         f"• <b>Rejim:</b> {mode_display}\n"
         f"• <b>Vaqt oralig'i:</b> Har {interval} daqiqada\n"
-        f"• <b>RSS Manbalari:</b> 📡 {feed_display}\n"
         f"• <b>Manba tugmasi:</b> {source_btn_display}\n"
         f"• <b>AI Maslahatchi:</b> {ai_btn_display}\n"
         f"• <b>Oxirgi zaxira (Backup):</b> <code>{last_backup}</code>\n"
@@ -1247,112 +1209,6 @@ async def cb_queue_pub_first(call: CallbackQuery, bot: Bot):
 async def cb_ignore_cb(call: CallbackQuery):
     await call.answer()
 
-# ==================== RSS MANBALARINI DINAMIK BOSHQARISH ====================
-
-@router.message(Command("feeds", "sources", "manbalar"))
-async def cmd_feeds(message: Message):
-    if not await check_is_admin(message.from_user.id):
-        return
-    text, kb = await render_feeds_page(page=0)
-    await message.answer(text, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-
-@router.callback_query(F.data.startswith("admin_feeds:"))
-async def cb_admin_feeds(call: CallbackQuery):
-    if not await check_is_admin(call.from_user.id):
-        await call.answer("Ruxsat yo'q!", show_alert=True)
-        return
-    page = int(call.data.split(":")[1])
-    text, kb = await render_feeds_page(page=page)
-    try:
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-    except Exception:
-        await call.message.answer(text, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-    await call.answer()
-
-@router.callback_query(F.data.startswith("toggle_feed:"))
-async def cb_toggle_feed(call: CallbackQuery):
-    if not await check_is_admin(call.from_user.id):
-        await call.answer("Ruxsat yo'q!", show_alert=True)
-        return
-    parts = call.data.split(":")
-    slug = parts[1]
-    page = int(parts[2]) if len(parts) > 2 else 0
-
-    curr = await database.is_feed_enabled(slug)
-    new_state = not curr
-    await database.set_feed_enabled(slug, new_state)
-
-    state_label = "yoqildi (🟢)" if new_state else "o'chirildi (🔴)"
-    await call.answer(f"Manba {state_label}!", show_alert=False)
-
-    text, kb = await render_feeds_page(page=page)
-    try:
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-    except Exception:
-        pass
-
-@router.callback_query(F.data.startswith("enable_all_feeds:"))
-async def cb_enable_all_feeds(call: CallbackQuery):
-    if not await check_is_admin(call.from_user.id):
-        await call.answer("Ruxsat yo'q!", show_alert=True)
-        return
-    parts = call.data.split(":")
-    page = int(parts[1]) if len(parts) > 1 else 0
-
-    all_slugs = [s.get("slug") for s in config.RSS_SOURCES if s.get("slug")]
-    await database.enable_all_feeds(all_slugs)
-    await call.answer("Barcha RSS manbalar faollashtirildi! 🟢", show_alert=False)
-
-    text, kb = await render_feeds_page(page=page)
-    try:
-        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-    except Exception:
-        pass
-
-@router.callback_query(F.data == "ping_feeds")
-async def cb_ping_feeds(call: CallbackQuery):
-    if not await check_is_admin(call.from_user.id):
-        await call.answer("Ruxsat yo'q!", show_alert=True)
-        return
-
-    await call.answer("⚡️ Manbalar tekshirilmoqda...", show_alert=False)
-    try:
-        await call.message.edit_text(
-            "⚡️ <b>Barcha RSS manbalari tekshirilmoqda...</b>\n\nIltimos kuting, har bir saytga asinxron so'rov yuborilmoqda...",
-            parse_mode="HTML"
-        )
-    except Exception:
-        pass
-
-    from rss_parser import ping_rss_sources
-    results = await ping_rss_sources()
-
-    lines = [
-        "⚡️ <b>RSS Manbalari Diagnostikasi (Jonli Ping Test):</b>\n"
-    ]
-    ok_count = 0
-    for r in results:
-        status_icon = "🟢" if r["ok"] else "🔴"
-        active_label = "Faol" if r["is_active"] else "O'chiq"
-        if r["ok"]:
-            ok_count += 1
-            lines.append(f"{status_icon} <b>{r['name']}</b>: <code>{r['status_text']}</code> ({r['elapsed_ms']}ms) [{active_label}]")
-        else:
-            lines.append(f"{status_icon} <b>{r['name']}</b>: <code>{r['status_text']}</code> [{active_label}]")
-
-    lines.append(f"\n📊 <b>Natija:</b> {ok_count}/{len(results)} ta manba ishlab turibdi.")
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Qayta tekshirish (Ping)", callback_data="ping_feeds")],
-        [InlineKeyboardButton(text="📡 Manbalar ro'yxatiga qaytish", callback_data="admin_feeds:0")],
-        [InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")]
-    ])
-
-    try:
-        await call.message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=kb, disable_web_page_preview=True)
-    except Exception:
-        pass
-
 # ==================== PREMIUM EMOJI BOSHQARUVI ====================
 
 @router.message(Command("emojis", "emoji"))
@@ -1474,6 +1330,81 @@ async def cb_delete_message(call: CallbackQuery):
     except Exception:
         pass
     await call.answer()
+
+# ==================== RSS MANBALARINI BOSHQARISH (FEED MANAGEMENT) ====================
+
+@router.message(Command("feeds", "manbalar", "rss"))
+async def cmd_feeds_list(message: Message):
+    if not await check_is_admin(message.from_user.id):
+        await message.reply("Kechirasiz, ushbu buyruq faqat bot ma'muri uchun.")
+        return
+    text = await render_feeds_panel_text()
+    kb = await get_feeds_keyboard()
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data == "admin_feeds_menu")
+async def cb_admin_feeds_menu(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+    text = await render_feeds_panel_text()
+    kb = await get_feeds_keyboard()
+    try:
+        if call.message.text:
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        else:
+            await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await call.answer()
+
+@router.callback_query(F.data.startswith("toggle_feed:"))
+async def cb_toggle_feed(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    slug = call.data.split(":")[1]
+    feed_name = slug
+    for src in config.RSS_SOURCES:
+        if src.get("slug") == slug:
+            feed_name = src["name"]
+            break
+
+    curr = await database.get_setting(f"feed_{slug}_enabled", "1")
+    new_val = "0" if curr == "1" else "1"
+    await database.set_setting(f"feed_{slug}_enabled", new_val)
+
+    status_word = "yoqildi 🟢" if new_val == "1" else "o'chirildi 🔴"
+    await call.answer(f"{feed_name} {status_word}", show_alert=False)
+
+    text = await render_feeds_panel_text()
+    kb = await get_feeds_keyboard()
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
+
+@router.callback_query(F.data.in_({"feed_all:enable", "feed_all:disable"}))
+async def cb_toggle_all_feeds(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    new_val = "1" if call.data == "feed_all:enable" else "0"
+    for src in config.RSS_SOURCES:
+        slug = src.get("slug", src["name"].lower().replace(" ", "_"))
+        await database.set_setting(f"feed_{slug}_enabled", new_val)
+
+    alert_msg = "Barcha manbalar yoqildi! 🟢" if new_val == "1" else "Barcha manbalar o'chirildi! 🔴"
+    await call.answer(alert_msg, show_alert=False)
+
+    text = await render_feeds_panel_text()
+    kb = await get_feeds_keyboard()
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
 
 # ==================== MODERATSIYA TUGMALARI ====================
 

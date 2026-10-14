@@ -85,68 +85,68 @@ POST_SPACING_MINUTES = int(os.getenv("POST_SPACING_MINUTES", "10"))
 # Sara IT, AI, startaplar va texno-kompaniyalar RSS manbalari (AI va Startaplar 1-o'rinda)
 RSS_SOURCES = [
     {
-        "slug": "google_ai",
         "name": "Google AI Blog",
+        "slug": "google_ai",
         "url": "https://blog.google/innovation-and-ai/technology/ai/rss/",
         "category": "AI Modellar & Google DeepMind"
     },
     {
-        "slug": "openai",
         "name": "OpenAI News",
+        "slug": "openai",
         "url": "https://openai.com/news/rss.xml",
         "category": "AI Modellar & OpenAI"
     },
     {
-        "slug": "techcrunch_ai",
         "name": "TechCrunch AI",
+        "slug": "techcrunch_ai",
         "url": "https://techcrunch.com/category/artificial-intelligence/feed/",
         "category": "AI Kompaniyalar & Startaplar"
     },
     {
-        "slug": "the_decoder",
         "name": "The Decoder",
+        "slug": "the_decoder",
         "url": "https://the-decoder.com/feed/",
         "category": "AI Modellar & Tadqiqotlar"
     },
     {
-        "slug": "marktechpost",
         "name": "MarkTechpost",
+        "slug": "marktechpost",
         "url": "https://www.marktechpost.com/feed/",
         "category": "AI Tadqiqotlar & LLM"
     },
     {
-        "slug": "techcrunch_startups",
         "name": "TechCrunch Startups",
+        "slug": "techcrunch_startups",
         "url": "https://techcrunch.com/category/startups/feed/",
         "category": "IT & Texno Startaplar"
     },
     {
-        "slug": "the_verge",
         "name": "The Verge",
+        "slug": "the_verge",
         "url": "https://www.theverge.com/rss/index.xml",
         "category": "IT Kompaniyalar & Texnologiya"
     },
     {
-        "slug": "toms_hardware",
         "name": "Tom's Hardware",
+        "slug": "toms_hardware",
         "url": "https://www.tomshardware.com/feeds.xml",
         "category": "Chiplar, GPU & Uskunalar"
     },
     {
-        "slug": "ars_technica",
         "name": "Ars Technica",
+        "slug": "ars_technica",
         "url": "https://feeds.arstechnica.com/arstechnica/index",
         "category": "IT Sanoat & Texnologiya"
     },
     {
-        "slug": "gsmarena",
         "name": "GSMArena",
+        "slug": "gsmarena",
         "url": "https://www.gsmarena.com/rss-news-reviews.php3",
         "category": "Flagman Smartfonlar & Yangi Devayslar"
     },
     {
-        "slug": "engadget",
         "name": "Engadget",
+        "slug": "engadget",
         "url": "https://www.engadget.com/rss.xml",
         "category": "Yangi Texnologiyalar"
     }
