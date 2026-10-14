@@ -273,6 +273,33 @@ async def get_last_scheduled_time() -> Optional[str]:
             row = await cursor.fetchone()
             return row["scheduled_at"] if row else None
 
+async def get_scheduled_posts(limit: int = 5, offset: int = 0) -> List[Dict[str, Any]]:
+    """Navbatdagi barcha rejalashtirilgan postlarni vaqti bo'yicha olish"""
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM posts 
+            WHERE status = 'scheduled'
+            ORDER BY scheduled_at ASC
+            LIMIT ? OFFSET ?
+        """, (limit, offset)) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(r) for r in rows]
+
+async def get_scheduled_count() -> int:
+    """Navbatda turgan postlar soni"""
+    async with get_db() as db:
+        async with db.execute("SELECT COUNT(*) FROM posts WHERE status = 'scheduled'") as cursor:
+            row = await cursor.fetchone()
+            return row[0] if row else 0
+
+async def cancel_scheduled_post(post_id: int) -> bool:
+    """Postni navbatdan bekor qilish (status='rejected')"""
+    async with get_db() as db:
+        await db.execute("UPDATE posts SET status = 'rejected' WHERE id = ?", (post_id,))
+        await db.commit()
+        return True
+
 async def register_user(
     user_id: int,
     username: Optional[str] = None,

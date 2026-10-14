@@ -90,12 +90,14 @@ def get_emojis_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-def get_admin_keyboard(mode: str, interval: int, buttons_enabled: bool = True) -> InlineKeyboardMarkup:
+def get_admin_keyboard(mode: str, interval: int, buttons_enabled: bool = True, queue_count: int = 0) -> InlineKeyboardMarkup:
     """Admin boshqaruv paneli tugmalari (Asosiy harakatlar yashil rangda)"""
     mode_btn_text = "🟢 Rejim: Avtomatik (Faol)" if mode == "auto" else "🟡 Rejim: Moderatsiya (Tasdiqlash)"
     toggle_mode = "moderation" if mode == "auto" else "auto"
 
     buttons_btn_text = "🔘 Kanal tugmalari: 🟢 Faol" if buttons_enabled else "🔘 Kanal tugmalari: 🔴 O'chirilgan"
+
+    queue_btn_text = f"📋 Postlar Navbati ({queue_count} ta)" if queue_count > 0 else "📋 Postlar Navbati (Bo'sh)"
 
     kb = [
         [InlineKeyboardButton(text=mode_btn_text, callback_data=f"set_mode:{toggle_mode}")],
@@ -105,7 +107,10 @@ def get_admin_keyboard(mode: str, interval: int, buttons_enabled: bool = True) -
             InlineKeyboardButton(text="⏱ 60 min", callback_data="set_interval:60"),
         ],
         [
-            InlineKeyboardButton(text="🔘 Kanal tugmalari: 🟢 Faol" if buttons_enabled else "🔘 Kanal tugmalari: 🔴 O'chirilgan", callback_data="toggle_channel_buttons")
+            InlineKeyboardButton(text=queue_btn_text, callback_data="admin_queue:0")
+        ],
+        [
+            InlineKeyboardButton(text=buttons_btn_text, callback_data="toggle_channel_buttons")
         ],
         [
             InlineKeyboardButton(text="📊 Holat (/status)", callback_data="view_bot_status"),
@@ -126,6 +131,109 @@ def get_admin_keyboard(mode: str, interval: int, buttons_enabled: bool = True) -
         ]
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
+
+def format_sched_time(iso_str: str) -> str:
+    """Rejalashtirilgan vaqtni Toshkent vaqti va oraliq daqiqa bilan formatlash"""
+    if not iso_str:
+        return "Noma'lum"
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        dt_t = dt.astimezone(config.TASHKENT_TZ)
+        now_t = datetime.now(config.TASHKENT_TZ)
+        diff_mins = int((dt_t - now_t).total_seconds() / 60)
+        time_str = dt_t.strftime("%H:%M")
+
+        if dt_t.date() == now_t.date():
+            prefix = "Bugun"
+        elif dt_t.date() == (now_t + timedelta(days=1)).date():
+            prefix = "Ertaga"
+        else:
+            prefix = dt_t.strftime("%d-%b")
+
+        if diff_mins <= 0:
+            rel = "navbatda kutmoqda"
+        elif diff_mins < 60:
+            rel = f"+{diff_mins} daqiqa"
+        else:
+            h = diff_mins // 60
+            m = diff_mins % 60
+            rel = f"+{h} soat {m} min"
+
+        return f"{prefix} soat {time_str} ({rel})"
+    except Exception:
+        return str(iso_str)[:16]
+
+async def render_queue_page(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
+    """Rejalashtirilgan postlar navbati matni va paginatsiya tugmalari"""
+    limit = 5
+    total_count = await database.get_scheduled_count()
+    if total_count == 0:
+        text = (
+            "📋 <b>NeuraTech — Rejalashtirilgan Postlar Navbati</b>\n\n"
+            "🟢 <b>Hozircha navbatda turgan postlar yo'q (bo'sh).</b>\n\n"
+            "Yangi xabarlar RSS manbalari skanerlanganda avtomatik ravishda navbatga qo'shiladi."
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🟢 🔍 Hozir yangilik qidirish", callback_data="manual_check")],
+            [InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")]
+        ])
+        return text, kb
+
+    total_pages = max(1, (total_count + limit - 1) // limit)
+    page = max(0, min(page, total_pages - 1))
+    offset = page * limit
+
+    posts = await database.get_scheduled_posts(limit=limit, offset=offset)
+
+    lines = [
+        "📋 <b>NeuraTech — Rejalashtirilgan Postlar Navbati</b>\n",
+        f"⏳ Jami kutilmoqda: <b>{total_count} ta post</b>",
+        f"📄 Sahifa: <b>{page + 1} / {total_pages}</b>\n"
+    ]
+
+    kb_buttons = []
+    num_icons = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+
+    for i, post in enumerate(posts):
+        num_icon = num_icons[i] if i < len(num_icons) else f"{i+1}."
+        title = post.get("title", "Sarlavhasiz")
+        source = post.get("source_name", "IT")
+        sched_label = format_sched_time(post.get("scheduled_at", ""))
+
+        lines.append(
+            f"{num_icon} <b>{title[:75]}...</b>\n"
+            f"   🕒 Vaqti: <code>{sched_label}</code> | <i>{source}</i>\n"
+        )
+        kb_buttons.append([
+            InlineKeyboardButton(
+                text=f"{num_icon} {title[:36]}...",
+                callback_data=f"view_q_post:{post['id']}:{page}"
+            )
+        ])
+
+    # Paginatsiya qatori
+    nav_row = []
+    if page > 0:
+        nav_row.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"admin_queue:{page - 1}"))
+    nav_row.append(InlineKeyboardButton(text=f"📄 {page + 1}/{total_pages}", callback_data="ignore_cb"))
+    if page < total_pages - 1:
+        nav_row.append(InlineKeyboardButton(text="Keyingi ➡️", callback_data=f"admin_queue:{page + 1}"))
+
+    if nav_row:
+        kb_buttons.append(nav_row)
+
+    # Tezkor chiqarish
+    kb_buttons.append([
+        InlineKeyboardButton(text="🚀 Eng birinchi postni hoziroq chiqarish", callback_data="queue_pub_first")
+    ])
+
+    # Qaytish
+    kb_buttons.append([
+        InlineKeyboardButton(text="🔄 Yangilash", callback_data=f"admin_queue:{page}"),
+        InlineKeyboardButton(text="⚙️ Admin panel", callback_data="view_admin_panel")
+    ])
+
+    return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=kb_buttons)
 
 async def get_channel_post_keyboard(post_id: Optional[int] = None, original_url: Optional[str] = None) -> Optional[InlineKeyboardMarkup]:
     """Kanalga chiquvchi post ostiga ixcham inline tugmalar bloki"""
@@ -160,7 +268,8 @@ async def get_rendered_admin_panel() -> tuple[str, InlineKeyboardMarkup]:
     mode = await database.get_setting("mode", "moderation")
     interval = int(await database.get_setting("interval_minutes", "25"))
     buttons_enabled = (await database.get_setting("channel_buttons", "1") == "1")
-    return text, get_admin_keyboard(mode, interval, buttons_enabled)
+    queue_count = await database.get_scheduled_count()
+    return text, get_admin_keyboard(mode, interval, buttons_enabled, queue_count)
 
 def get_moderation_keyboard(post_id: int) -> InlineKeyboardMarkup:
     """Moderatsiya uchun har bir post ostidagi tugmalar (Asosiy chiqarish tugmasi yashil belgi bilan)"""
@@ -825,6 +934,169 @@ async def cb_admin_download_backup(call: CallbackQuery, bot: Bot):
     success = await send_database_backup(bot=bot, admin_id=call.from_user.id, is_automatic=False)
     if not success:
         await call.message.answer("❌ Zaxira nusxasini tayyorlashda xatolik yuz berdi.")
+
+# ==================== POSTLAR NAVBATI (QUEUE MANAGER) ====================
+
+@router.message(Command("queue", "navbat"))
+async def cmd_queue(message: Message):
+    if not await check_is_admin(message.from_user.id):
+        await message.reply("Kechirasiz, ushbu buyruq faqat bot ma'muri uchun.")
+        return
+    text, kb = await render_queue_page(page=0)
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data.startswith("admin_queue:"))
+async def cb_admin_queue(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+    page = int(call.data.split(":")[1])
+    text, kb = await render_queue_page(page=page)
+    try:
+        if call.message.text:
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        else:
+            await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await call.answer()
+
+@router.callback_query(F.data.startswith("view_q_post:"))
+async def cb_view_q_post(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    parts = call.data.split(":")
+    post_id = int(parts[1])
+    page = int(parts[2]) if len(parts) > 2 else 0
+
+    post = await database.get_post(post_id)
+    if not post:
+        await call.answer("Post topilmadi!", show_alert=True)
+        return
+
+    sched_time = format_sched_time(post.get("scheduled_at", ""))
+    preview_header = (
+        f"📋 <b>Navbatdagi Post #{post['id']} Tafsilotlari</b>\n"
+        f"🕒 Rejalashtirilgan vaqt: <code>{sched_time}</code>\n"
+        f"📡 Manba: <b>{post.get('source_name', 'IT')}</b>\n"
+        "────────────────────\n\n"
+    )
+    full_text = preview_header + post["uz_caption"]
+
+    q_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🟢 🚀 Hoziroq kanalga chiqarish", callback_data=f"q_pub:{post_id}:{page}")],
+        [InlineKeyboardButton(text="🗑 Navbatdan o'chirish (Bekor qilish)", callback_data=f"q_del:{post_id}:{page}")],
+        [InlineKeyboardButton(text="⬅️ Navbat ro'yxatiga qaytish", callback_data=f"admin_queue:{page}")]
+    ])
+
+    await call.answer()
+    if post.get("image_url"):
+        sent = await send_user_preview_media(call, post["image_url"], full_text, q_kb)
+        if sent:
+            return
+
+    await call.message.answer(
+        text=full_text[:4096],
+        parse_mode="HTML",
+        reply_markup=q_kb
+    )
+
+@router.callback_query(F.data.startswith("q_pub:"))
+async def cb_q_publish(call: CallbackQuery, bot: Bot):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    parts = call.data.split(":")
+    post_id = int(parts[1])
+    page = int(parts[2]) if len(parts) > 2 else 0
+
+    post = await database.get_post(post_id)
+    if not post or post["status"] == "published":
+        await call.answer("Ushbu post allaqachon chiqarilgan yoki topilmadi!", show_alert=True)
+        return
+
+    now_str = datetime.now(timezone.utc).isoformat()
+    await database.set_post_status(post_id, "published", published_at=now_str)
+
+    try:
+        from scheduler import send_to_channel
+        channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"))
+        await send_to_channel(bot, post["image_url"], post["uz_caption"], reply_markup=channel_kb)
+        await call.answer("Post kanalga muvaffaqiyatli chiqarildi! 🚀", show_alert=False)
+    except Exception as e:
+        await call.answer(f"Xatolik: {e}", show_alert=True)
+        return
+
+    text, kb = await render_queue_page(page=page)
+    try:
+        if call.message.text:
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        else:
+            await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data.startswith("q_del:"))
+async def cb_q_delete(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    parts = call.data.split(":")
+    post_id = int(parts[1])
+    page = int(parts[2]) if len(parts) > 2 else 0
+
+    await database.cancel_scheduled_post(post_id)
+    await call.answer("Post navbatdan o'chirildi 🗑", show_alert=False)
+
+    text, kb = await render_queue_page(page=page)
+    try:
+        if call.message.text:
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        else:
+            await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data == "queue_pub_first")
+async def cb_queue_pub_first(call: CallbackQuery, bot: Bot):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    posts = await database.get_scheduled_posts(limit=1, offset=0)
+    if not posts:
+        await call.answer("Navbatda postlar yo'q!", show_alert=True)
+        return
+
+    post = posts[0]
+    now_str = datetime.now(timezone.utc).isoformat()
+    await database.set_post_status(post["id"], "published", published_at=now_str)
+
+    try:
+        from scheduler import send_to_channel
+        channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"))
+        await send_to_channel(bot, post["image_url"], post["uz_caption"], reply_markup=channel_kb)
+        await call.answer(f"«{post['title'][:30]}...» kanalga chiqarildi! 🚀", show_alert=False)
+    except Exception as e:
+        await call.answer(f"Xatolik: {e}", show_alert=True)
+        return
+
+    text, kb = await render_queue_page(page=0)
+    try:
+        if call.message.text:
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        else:
+            await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data == "ignore_cb")
+async def cb_ignore_cb(call: CallbackQuery):
+    await call.answer()
 
 # ==================== PREMIUM EMOJI BOSHQARUVI ====================
 

@@ -54,12 +54,13 @@ flowchart LR
 ---
 
 ### 4-Bosqich: 📋 Postlar Navbatini Boshqarish (Queue Manager)
-> **Maqsad:** 10 daqiqalik intervallar bilan navbatda turgan xabarlarni nazorat qilish.
+> **Holati:** ✅ Bajarildi va Serverda Faol
 
-- [ ] Admin panelda **`📋 Postlar Navbati`** tugmasi.
-- [ ] Yaqin soatlarda chiqishi rejalashtirilgan yangiliklar ro'yxati (Sarlavha, rejalashtirilgan vaqt).
-- [ ] Keraksiz yoki eskirib qolgan xabarni bitta tugma bilan navbatdan chiqarib tashlash (`🗑 O'chirish`).
-- [ ] Navbatdagi birinchi xabarni kutmasdan zudlik bilan chiqarish (`🚀 Hoziroq chiqarish`).
+- [x] **Admin panelda tugma va `/queue` buyrug'i:** `📋 Postlar Navbati (X ta)` tugmasi orqali jami kutilayotgan postlar soni va ro'yxatini ko'rish.
+- [x] **Paginatsiya va Vaqtlar:** Sahifalangan ro'yxat, har bir postning chiqish vaqti (Toshkent vaqti va relaks daqiqalar bilan).
+- [x] **Post Tafsilotlari & Ko'rish:** Post sarlavhasini bosganda to'liq matn va rasmi bilan preview ko'rish.
+- [x] **Tezkor Chiqarish:** Navbatdagi birinchi xabarni yoki tanlangan postni kutmasdan zudlik bilan kanalga chiqarish (`🚀 Hoziroq chiqarish`).
+- [x] **Navbatdan O'chirish:** Keraksiz yoki eskirib qolgan xabarni bitta tugma bilan navbatdan chiqarib tashlash (`🗑 Navbatdan o'chirish`).
 
 ---
 
