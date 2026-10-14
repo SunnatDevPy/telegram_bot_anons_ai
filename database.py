@@ -215,6 +215,15 @@ async def update_post_caption(post_id: int, new_caption: str):
         await db.execute("UPDATE posts SET uz_caption = ? WHERE id = ?", (new_caption, post_id))
         await db.commit()
 
+async def update_post_content(post_id: int, new_caption: str, image_url: Optional[str] = None):
+    """Postning matni va ixtiyoriy ravishda rasmini yangilash"""
+    async with get_db() as db:
+        if image_url is not None:
+            await db.execute("UPDATE posts SET uz_caption = ?, image_url = ? WHERE id = ?", (new_caption, image_url, post_id))
+        else:
+            await db.execute("UPDATE posts SET uz_caption = ? WHERE id = ?", (new_caption, post_id))
+        await db.commit()
+
 async def set_post_status(
     post_id: int,
     status: str,

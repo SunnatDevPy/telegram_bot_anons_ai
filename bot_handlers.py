@@ -1,4 +1,6 @@
 import asyncio
+import html
+import re
 from typing import Optional, Union, Dict, Any, List
 from datetime import datetime, timedelta, timezone
 from aiogram import Router, F, Bot
@@ -8,6 +10,7 @@ from aiogram.types import (
     ReplyKeyboardMarkup, KeyboardButton
 )
 from aiogram.filters import Command
+from aiogram.exceptions import TelegramBadRequest
 
 import config
 import database
@@ -20,6 +23,9 @@ router = Router()
 # Reklama yuborish holatlarini saqlash
 admin_broadcast_state = {}    # {admin_id: "waiting_message"}
 admin_broadcast_pending = {}  # {admin_id: {"chat_id": int, "message_id": int}}
+
+# Admin qoralama postni tahrirlash holati: {admin_id: {"post_id": int, "origin": str, "page": int}}
+admin_edit_draft_state = {}
 
 # Foydalanuvchilar qidiruv va AI maslahatchi holatlari
 user_search_state = {}        # {user_id: True}
@@ -279,7 +285,10 @@ def get_moderation_keyboard(post_id: int) -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="⏳ +30 daqiqa", callback_data=f"delay:{post_id}:30"),
             InlineKeyboardButton(text="⏳ +1 soat", callback_data=f"delay:{post_id}:60")
         ],
-        [InlineKeyboardButton(text="🔄 Qayta yozdirish (AI)", callback_data=f"regen:{post_id}")],
+        [
+            InlineKeyboardButton(text="✏️ Matnni tahrirlash", callback_data=f"edit_draft:{post_id}"),
+            InlineKeyboardButton(text="🔄 Qayta yozdirish (AI)", callback_data=f"regen:{post_id}")
+        ],
         [InlineKeyboardButton(text="🗑 Bekor qilish (O'chirish)", callback_data=f"reject:{post_id}")]
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
@@ -987,7 +996,10 @@ async def cb_view_q_post(call: CallbackQuery):
 
     q_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🟢 🚀 Hoziroq kanalga chiqarish", callback_data=f"q_pub:{post_id}:{page}")],
-        [InlineKeyboardButton(text="🗑 Navbatdan o'chirish (Bekor qilish)", callback_data=f"q_del:{post_id}:{page}")],
+        [
+            InlineKeyboardButton(text="✏️ Matnni tahrirlash", callback_data=f"q_edit:{post_id}:{page}"),
+            InlineKeyboardButton(text="🗑 Navbatdan o'chirish (Bekor qilish)", callback_data=f"q_del:{post_id}:{page}")
+        ],
         [InlineKeyboardButton(text="⬅️ Navbat ro'yxatiga qaytish", callback_data=f"admin_queue:{page}")]
     ])
 
@@ -1405,6 +1417,76 @@ async def cb_regen_post(call: CallbackQuery):
             reply_markup=get_moderation_keyboard(post_id)
         )
 
+@router.callback_query(F.data.startswith("edit_draft:") | F.data.startswith("q_edit:"))
+async def cb_start_edit_draft(call: CallbackQuery):
+    """Admin uchun post matnini qo'lda tahrirlash rejimini yoqish"""
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    parts = call.data.split(":")
+    action = parts[0]
+    post_id = int(parts[1])
+    page = int(parts[2]) if len(parts) > 2 else 0
+    origin = "queue" if action == "q_edit" else "moderation"
+
+    post = await database.get_post(post_id)
+    if not post or post["status"] == "published":
+        await call.answer("Post topilmadi yoki allaqachon chiqarilgan!", show_alert=True)
+        return
+
+    admin_edit_draft_state[call.from_user.id] = {
+        "post_id": post_id,
+        "origin": origin,
+        "page": page,
+        "chat_id": call.message.chat.id,
+        "message_id": call.message.message_id
+    }
+
+    await call.answer("Tahrirlash rejimi faollashdi ✏️")
+
+    cancel_kb = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="🔴 ❌ Tahrirlashni bekor qilish", callback_data=f"cancel_edit_draft:{post_id}")
+    ]])
+
+    intro_text = (
+        f"✏️ <b>Post #{post_id} matnini tahrirlash:</b>\n\n"
+        "1. Pastdagi maxsus blokdagi matn ustiga bosing (avtomatik nusxalanadi).\n"
+        "2. Kerakli o'zgartirishlarni kiritib, <b>botga yangi xabar qilib yuboring</b>.\n\n"
+        "💡 <i>Formatlash:</i> <code>&lt;b&gt;qalin&lt;/b&gt;</code>, <code>&lt;i&gt;kursiv&lt;/i&gt;</code>, havolalar yoki Telegram formatlash menyusi.\n"
+        "<i>(Postda rasm bo'lsa, Telegram rasm izohi 1024 belgidan oshmasligi kerak.)</i>\n\n"
+        "Bekor qilish uchun: /cancel deb yozing yoki quyidagi tugmani bosing:"
+    )
+
+    await call.message.answer(intro_text, parse_mode="HTML", reply_markup=cancel_kb)
+
+    raw_caption = post.get("uz_caption", "")
+    escaped_for_pre = html.escape(raw_caption)
+    if len(escaped_for_pre) > 3900:
+        escaped_for_pre = escaped_for_pre[:3900] + "..."
+
+    await call.message.answer(
+        f"📋 <b>Post matni (nusxalash uchun ustiga bosing):</b>\n\n<pre><code>{escaped_for_pre}</code></pre>",
+        parse_mode="HTML"
+    )
+
+@router.callback_query(F.data.startswith("cancel_edit_draft:"))
+async def cb_cancel_edit_draft(call: CallbackQuery):
+    """Post tahrirlashni bekor qilish"""
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    admin_edit_draft_state.pop(call.from_user.id, None)
+    await call.answer("Tahrirlash bekor qilindi ❌")
+    try:
+        if call.message.caption:
+            await call.message.edit_caption(caption="❌ <b>Postni tahrirlash bekor qilindi.</b>", parse_mode="HTML", reply_markup=None)
+        else:
+            await call.message.edit_text("❌ <b>Postni tahrirlash bekor qilindi.</b>", parse_mode="HTML", reply_markup=None)
+    except Exception:
+        pass
+
 # ==================== HAR QANDAY KELGAN XABARNI TUTISH ====================
 
 @router.message()
@@ -1427,6 +1509,139 @@ async def handle_incoming_messages(message: Message, bot: Bot):
             if ent.type == "custom_emoji" and ent.custom_emoji_id:
                 if ent.custom_emoji_id not in custom_emojis:
                     custom_emojis.append(ent.custom_emoji_id)
+
+    # 0. Agar admin post tahrirlash holatida bo'lsa:
+    if is_admin and admin_id in admin_edit_draft_state:
+        edit_info = admin_edit_draft_state.get(admin_id, {})
+        post_id = edit_info.get("post_id")
+        origin = edit_info.get("origin", "moderation")
+        page = edit_info.get("page", 0)
+
+        # Bekor qilish tekshiruvi
+        if message.text and message.text.strip().lower() in ["/cancel", "bekor qilish"]:
+            admin_edit_draft_state.pop(admin_id, None)
+            await message.answer("❌ Postni tahrirlash bekor qilindi.")
+            return
+
+        post = await database.get_post(post_id)
+        if not post or post["status"] == "published":
+            admin_edit_draft_state.pop(admin_id, None)
+            await message.answer("⚠️ Post bazada topilmadi yoki allaqachon kanalga chiqarilgan.")
+            return
+
+        # Yangi rasm yuborilgan bo'lsa
+        new_image_url = None
+        if message.photo:
+            new_image_url = message.photo[-1].file_id
+
+        # Matn va entitiylarni aniqlash
+        formatting_entity_types = {
+            "bold", "italic", "underline", "strikethrough", "code", "pre",
+            "text_link", "custom_emoji", "blockquote"
+        }
+        has_entities = False
+        if message.entities and any(e.type in formatting_entity_types for e in message.entities):
+            has_entities = True
+        elif message.caption_entities and any(e.type in formatting_entity_types for e in message.caption_entities):
+            has_entities = True
+
+        if has_entities:
+            new_caption = message.html_text or (message.caption or "")
+        else:
+            new_caption = (message.text or message.caption or "").strip()
+
+        if not new_caption:
+            await message.answer("⚠️ Iltimos, post uchun yangi matnni yozing yoki /cancel buyrug'ini bosing.")
+            return
+
+        effective_image = new_image_url or post.get("image_url")
+        has_image = bool(effective_image)
+
+        # Ko'rinadigan matn uzunligini tekshirish
+        visible_text = re.sub(r'<[^>]+>', '', new_caption)
+        if has_image and len(visible_text) > 1024:
+            await message.answer(
+                f"⚠️ <b>Matn juda uzun ({len(visible_text)} ta belgi)!</b>\n\n"
+                "Ushbu postda rasm mavjud. Telegram rasm ostidagi izohga ko'pi bilan <b>1024</b> ta belgiga ruxsat beradi.\n"
+                "Iltimos, matnni biroz qisqartirib qaytadan yuboring (yoki bekor qilish uchun /cancel deb yozing).",
+                parse_mode="HTML"
+            )
+            return
+        elif not has_image and len(visible_text) > 4096:
+            await message.answer(
+                f"⚠️ <b>Matn uzunligi {len(visible_text)} ta belgi!</b>\n"
+                "Telegram bitta xabarda ko'pi bilan 4096 ta belgiga ruxsat beradi. Iltimos qisqartirib yuboring.",
+                parse_mode="HTML"
+            )
+            return
+
+        # Klaviatura tayyorlash
+        if origin == "queue":
+            preview_kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🟢 🚀 Hoziroq kanalga chiqarish", callback_data=f"q_pub:{post_id}:{page}")],
+                [
+                    InlineKeyboardButton(text="✏️ Yana tahrirlash", callback_data=f"q_edit:{post_id}:{page}"),
+                    InlineKeyboardButton(text="🗑 Navbatdan o'chirish", callback_data=f"q_del:{post_id}:{page}")
+                ],
+                [InlineKeyboardButton(text="⬅️ Navbat ro'yxatiga qaytish", callback_data=f"admin_queue:{page}")]
+            ])
+        else:
+            preview_kb = get_moderation_keyboard(post_id)
+
+        header_badge = f"✏️ <b>TAHRIRLANGAN POST #{post_id} (PREVIEW):</b>\n\n"
+        full_preview_text = header_badge + new_caption
+
+        # Telegram HTML parse qila olishini tekshirish
+        try:
+            if has_image:
+                await bot.send_photo(
+                    chat_id=admin_id,
+                    photo=effective_image,
+                    caption=safe_telegram_caption(full_preview_text, max_len=1024),
+                    parse_mode="HTML",
+                    reply_markup=preview_kb
+                )
+            else:
+                await bot.send_message(
+                    chat_id=admin_id,
+                    text=safe_telegram_caption(full_preview_text, max_len=4096),
+                    parse_mode="HTML",
+                    reply_markup=preview_kb
+                )
+        except TelegramBadRequest as tbe:
+            err_text = str(tbe)
+            if "can't parse entities" in err_text.lower():
+                await message.answer(
+                    "⚠️ <b>HTML teglarda sintaktik xatolik aniqlandi!</b>\n\n"
+                    f"Telegram xatoligi: <code>{html.escape(err_text)}</code>\n\n"
+                    "Iltimos, ochiq qolgan teglarni (masalan <code>&lt;b&gt;...&lt;/b&gt;</code>) to'g'rilab qaytadan yuboring.\n"
+                    "Bekor qilish uchun: /cancel",
+                    parse_mode="HTML"
+                )
+                return
+            else:
+                await message.answer(
+                    f"⚠️ Xatolik: <code>{html.escape(err_text)}</code>\nIltimos, qaytadan urinib ko'ring yoki /cancel bosing.",
+                    parse_mode="HTML"
+                )
+                return
+        except Exception as e:
+            await message.answer(
+                f"⚠️ Kutilmagan xatolik: <code>{html.escape(str(e))}</code>\nIltimos, qaytadan yuboring yoki /cancel bosing.",
+                parse_mode="HTML"
+            )
+            return
+
+        # Bazasida saqlash
+        await database.update_post_content(post_id, new_caption, image_url=new_image_url)
+        admin_edit_draft_state.pop(admin_id, None)
+
+        await message.answer(
+            f"✅ <b>Post #{post_id} matni muvaffaqiyatli yangilandi va saqlandi!</b>\n\n"
+            "Yuqoridagi yangilangan preview ostidagi tugmalar orqali uni hoziroq kanalga chiqarishingiz yoki navbatda qoldirishingiz mumkin.",
+            parse_mode="HTML"
+        )
+        return
 
     # 1. Agar admin reklama yuborish holatida bo'lsa:
     if admin_broadcast_state.get(admin_id) == "waiting_message":

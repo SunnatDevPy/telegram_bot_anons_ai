@@ -65,10 +65,14 @@ flowchart LR
 ---
 
 ### 5-Bosqich: ✏️ Moderatsiyada Postni Qo'lda Tahrirlash (Manual Edit)
-> **Maqsad:** Admin qoralamani kanalga chiqarishdan oldin uning matniga o'zgartirish kirita olishi.
+> **Holati:** ✅ Bajarildi va Serverda Faol
 
-- [ ] Adminga kelgan qoralama ostiga **`✏️ Matnni tahrirlash`** tugmasi.
-- [ ] Admin yangi matn yuborganda, bot avtomatik HTML teglarini tekshirib, yangilangan matn bilan ko'rsatishi va tasdiqlashni so'rashi.
+- [x] **`✏️ Matnni tahrirlash` tugmasi:** Moderatsiyaga kelgan postlar va Postlar navbati (Queue) ostiga to'g'ridan-to'g'ri tahrirlash tugmasi qo'shildi.
+- [x] **Bitta bosishda nusxalash (Tap-to-copy):** Admin tahrirlashni tanlaganda, joriy matn Telegramda ustiga bitta bosishda to'liq nusxalanadigan maxsus kod blokida yuboriladi.
+- [x] **Avtomatik HTML sintaksis tekshiruvi:** Telegram HTML teglari (ochiq qolgan <code>&lt;b&gt;</code>, <code>&lt;i&gt;</code>, noto'g'ri havolalar) jo'natishdan oldin tekshiriladi va xatolik aniqlansa admin aniq sababi bilan ogohlantiriladi.
+- [x] **Telegram limitlari nazorati:** Rasm mavjud bo'lsa 1024 belgi, rasm bo'lmasa 4096 belgi chegarasi oldindan tekshiriladi.
+- [x] **Rasm va Matnni yangilash:** Agar admin matn bilan birga yangi rasm yuborsa, yangi rasm ham avtomatik qabul qilinib bazaga biriktiriladi.
+- [x] **Yangilangan Preview va Tasdiqlash:** Yangi ko'rinish darhol ekranda paydo bo'lib, admin uni hoziroq chiqarishi, navbatga qo'yishi yoki qayta tahrirlashi mumkin.
 
 ---
 
