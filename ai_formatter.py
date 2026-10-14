@@ -279,23 +279,22 @@ def format_paragraph_spacing(text: str) -> str:
     if not text:
         return ""
 
-    # 1. Sarlavha va Mohiyati orasida 2 ta bo'sh qator (\n\n)
+    # 0. Har qanday 'Mohiyati:' so'zini olib tashlaymiz (emojidan keyin darhol matn boshlansin)
     text = re.sub(
-        r'([^\n])\s*((?:<b>)?\s*📌\s*(?:<b>)?\s*Mohiyati:?\s*(?:</b>)?)',
+        r'((?:<tg-emoji[^>]*>)?📌(?:</tg-emoji>)?)\s*(?:<b>)?\s*Mohiyati:?\s*(?:</b>)?\s*',
+        r'\1 ',
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # 1. Sarlavha va 📌 orasida 2 ta bo'sh qator (\n\n)
+    text = re.sub(
+        r'([^\n])\s*((?:<tg-emoji[^>]*>)?📌(?:</tg-emoji>)?)',
         r'\1\n\n\2',
-        text,
-        flags=re.IGNORECASE
+        text
     )
 
-    # Mohiyati sarlavhasidan keyin matn yangi qatordan boshlansin
-    text = re.sub(
-        r'((?:<b>)?\s*📌\s*(?:<b>)?\s*Mohiyati:?\s*(?:</b>)?)\s*([^\n])',
-        r'\1\n\2',
-        text,
-        flags=re.IGNORECASE
-    )
-
-    # 2. Mohiyati matni va <blockquote orasida 2 ta bo'sh qator (\n\n)
+    # 2. 📌 matni va <blockquote orasida 2 ta bo'sh qator (\n\n)
     text = re.sub(
         r'([^\n])\s*(<blockquote[^>]*>)',
         r'\1\n\n\2',
@@ -340,15 +339,7 @@ def format_paragraph_spacing(text: str) -> str:
         flags=re.IGNORECASE
     )
 
-    # 6. Xulosa va 📡 Manba orasida bo'sh qator
-    text = re.sub(
-        r'([^\n])\s*((?:<b>)?\s*📡\s*(?:<b>)?\s*Manba:?\s*(?:</b>)?)',
-        r'\1\n\n\2',
-        text,
-        flags=re.IGNORECASE
-    )
-
-    # 7. </blockquote> va oldingi matn/keyingi matn
+    # 6. </blockquote> va oldingi matn/keyingi matn
     text = re.sub(
         r'([^\n])\s*(</blockquote>)',
         r'\1\2',
@@ -362,10 +353,18 @@ def format_paragraph_spacing(text: str) -> str:
         flags=re.IGNORECASE
     )
 
-    # 8. Hashtaglar bloki oldidan bo'sh qator
+    # 7. Hashtaglar bloki oldidan bo'sh qator
     text = re.sub(r'([^\n])\s*(🏷)', r'\1\n\n\2', text)
     if "🏷" not in text:
         text = re.sub(r'([^\n#\s])\s+(#\w+)', r'\1\n\n\2', text)
+
+    # 8. 📡 Manba oldidan bo'sh qator
+    text = re.sub(
+        r'([^\n])\s*((?:<tg-emoji[^>]*>)?📡(?:</tg-emoji>)?\s*(?:<b>)?\s*Manba:?\s*(?:</b>)?)',
+        r'\1\n\n\2',
+        text,
+        flags=re.IGNORECASE
+    )
 
     # 9. Ketma-ket 3 yoki undan ortiq bo'sh qatorlarni 2 taga keltirish
     text = re.sub(r'\n{3,}', '\n\n', text)
@@ -469,33 +468,55 @@ def safe_telegram_caption(caption: str, footer: str = "", max_len: int = 1024) -
     return result
 
 def attach_source_link(text: str, source_name: str, original_url: str) -> str:
-    """Post matnidagi '📡 Manba: ...' qismiga asl havola (link) ni chiroyli biriktirish"""
-    if not text or not original_url:
+    """Post matnidagi '📡 Manba: ...' qismini to'g'irlash:
+    - 'Mohiyati:' so'zini tozalaydi (📌 dan keyin to'g'ridan-to'g'ri matn bo'ladi)
+    - Sitata (blockquote) ichida yoki matnda qolgan eski Manba qatorlarini olib tashlaydi
+    - Barcha dublikatlarni tozalab, postning eng oxiriga (Kanalimizga obuna bo'ling tepasiga) 1 dona toza havola qo'yadi
+    """
+    if not text:
         return text
 
-    safe_url = original_url.strip()
-    if not safe_url.startswith("http") or safe_url in text:
-        return text
+    # 1. 'Mohiyati:' so'zini olib tashlaymiz
+    text = re.sub(
+        r'((?:<tg-emoji[^>]*>)?📌(?:</tg-emoji>)?)\s*(?:<b>)?\s*Mohiyati:?\s*(?:</b>)?\s*',
+        r'\1 ',
+        text,
+        flags=re.IGNORECASE
+    )
 
+    safe_url = original_url.strip() if original_url else ""
     safe_source = html.escape(source_name) if source_name else "Batafsil"
 
-    # '📡 <b>Manba:</b> Sayt' yoki '📡 Manba: Sayt' qatorini topish
-    pattern = r'((?:<b>)?\s*📡\s*(?:<b>)?\s*Manba:?\s*(?:</b>)?\s*)([^<\n]+)'
-    def repl(m):
-        prefix = m.group(1)
-        found_name = m.group(2).strip()
-        display_name = found_name if found_name else safe_source
-        return f'{prefix}<a href="{safe_url}">{display_name}</a>'
+    # 2. Mavjud barcha '📡 Manba: ...' qatorlarini (blockquote ichida yoki tashqarisidagi dublikatlarni) tozalaymiz
+    text = re.sub(
+        r'\n*\s*(?:<tg-emoji[^>]*>)?📡(?:</tg-emoji>)?\s*(?:<b>)?\s*Manba:?\s*(?:</b>)?\s*(?:<a\s+[^>]*>.*?</a>|[^<\n]*)(?=\s*</blockquote>|\n|$)',
+        '',
+        text,
+        flags=re.IGNORECASE
+    )
 
-    new_text, n = re.subn(pattern, repl, text, count=1, flags=re.IGNORECASE)
-    if n > 0:
-        return new_text
+    # 3. Agar </blockquote> oxirida ortiqcha bo'sh qatorlar qolgan bo'lsa tozalash
+    text = re.sub(r'\n+\s*</blockquote>', '</blockquote>', text)
 
-    link_html = f'📡 <b>Manba:</b> <a href="{safe_url}">{safe_source}</a>'
-    if "</blockquote>" in text:
-        return text.replace("</blockquote>", f"\n\n{link_html}</blockquote>")
-    if "🏷" in text:
-        return text.replace("🏷", f"{link_html}\n\n🏷")
+    # 4. Endi yagona, toza '📡 Manba: ...' qatorini shakllantiramiz
+    if safe_url.startswith("http"):
+        link_html = f'📡 <b>Manba:</b> <a href="{safe_url}">{safe_source}</a>'
+    else:
+        link_html = f'📡 <b>Manba:</b> {safe_source}'
+
+    # 5. Manba postning eng oxiriga, ya'ni kanal imzosi (🔔 Kanalimizga obuna bo'ling) ning tepasiga qo'yiladi!
+    if "🔔" in text and "obuna" in text.lower():
+        parts = re.split(
+            r'(\n*\s*(?:<tg-emoji[^>]*>)?🔔(?:</tg-emoji>)?\s*<b>?\s*Kanalimizga obuna)',
+            text,
+            maxsplit=1,
+            flags=re.IGNORECASE
+        )
+        if len(parts) >= 2:
+            body = parts[0].rstrip()
+            footer_part = "".join(parts[1:]).lstrip()
+            return f"{body}\n\n{link_html}\n\n{footer_part}"
+
     return text.rstrip() + f"\n\n{link_html}"
 
 async def fallback_formatter(title: str, summary: str, source_name: str, original_url: str = "") -> str:
@@ -530,12 +551,11 @@ async def fallback_formatter(title: str, summary: str, source_name: str, origina
 
     post = (
         f"⚡️ <b>{uz_title}</b>\n\n"
-        f"📌 <b>Mohiyati:</b>\n"
-        f"{essence}\n\n"
+        f"📌 {essence}\n\n"
         f"<blockquote expandable>📝 <b>Batafsil ma'lumot:</b>\n"
-        f"{more_details}\n\n"
-        f"📡 <b>Manba:</b> {source_link}</blockquote>\n\n"
-        f"🏷 #AI #IT #Texnologiya #Yangiliklar"
+        f"{more_details}</blockquote>\n\n"
+        f"🏷 #AI #IT #Texnologiya #Yangiliklar\n\n"
+        f"📡 <b>Manba:</b> {source_link}"
     )
     spaced = format_paragraph_spacing(post)
     return apply_premium_emojis(spaced)
@@ -556,8 +576,7 @@ QAT'IY FORMAT TALABLARI (Har bir bo'lim orasida ALBATTA 2 ta bo'sh qator joy tas
 
 ⚡️ <b>(1 ta kuchli qalin sarlavha)</b>
 
-📌 <b>Mohiyati:</b>
-(1-2 ta aniq, tushunarli jumla bilan asosiy voqea).
+📌 (1-2 ta aniq, tushunarli jumla bilan asosiy voqea. DIQQAT: "Mohiyati:" so'zini aslo yozma! To'g'ridan-to'g'ri 📌 emojisi ortidan matn boshlansin!).
 
 <blockquote expandable>📊 <b>Asosiy tafsilotlar:</b>
 • (1-punkt: muhim raqamlar, benchmarklar yoki yangilik)
@@ -565,19 +584,21 @@ QAT'IY FORMAT TALABLARI (Har bir bo'lim orasida ALBATTA 2 ta bo'sh qator joy tas
 • (2-punkt: kimga qaratilganligi yoki narx/xususiyat)
 
 💡 <b>Xulosa:</b>
-(1 ta jumla bilan soha va foydalanuvchilarga ta'siri).
-
-📡 <b>Manba:</b> {source_name}</blockquote>
+(1 ta jumla bilan soha va foydalanuvchilarga ta'siri).</blockquote>
 
 🏷 #AI #Texnologiya #{source_name.replace(' ', '')}
 
+📡 <b>Manba:</b> {source_name}
+
 QOIDALAR:
-1. Bo'limlar bir-biriga yopishib qolmasin, oralarida aniq bo'sh qatorlar bo'lsin.
-2. HECH QACHON do'kon chegirmalari (deals), aksiyalar, narx arzonlashuvi (Save $..., % off, chegirma) haqida yozma! Agar qurilma haqida bo'lsa, chegirmaga emas, balki QURILMANING O'ZI VA TEXNIK KUCHI, CHIP VA PARAMETRLARIGA e'tibor qarat!
-3. Har doim yangi devayslar (flagman smartfonlar, noutbuklar, konsollar, aqlli qurilmalar), yangi chiplar (Nvidia GPU, AMD/Intel CPU, Apple Silicon, Qualcomm, NPU), sun'iy intellekt modellari, benchmarklar hamda istiqbolli IT va AI startaplarni (investitsiyalar, innovatsion loyihalar) yorit!
-4. HECH QACHON [...] yoki ... yoki chala gap yozma!
-5. HECH QACHON Markdown yulduzchalaridan (**matn**) foydalanma! Qalin matn uchun faqat <b>matn</b> HTML teglaridan foydalan!
-6. Telegram caption limiti 1024 belgi! Jami matn uzunligi 700-850 belgi bo'lsin.
+1. "Mohiyati:" so'zi aslo ishlatilmasin, 📌 dan keyin to'g'ridan-to'g'ri matn yozilsin.
+2. 📡 <b>Manba:</b> qismi sitata (<blockquote) ichida emas, sitatadan TASHQARIDA va hashtagdan keyin, eng pastda tursin!
+3. Bo'limlar bir-biriga yopishib qolmasin, oralarida aniq bo'sh qatorlar bo'lsin.
+4. HECH QACHON do'kon chegirmalari (deals), aksiyalar, narx arzonlashuvi (Save $..., % off, chegirma) haqida yozma! Agar qurilma haqida bo'lsa, chegirmaga emas, balki QURILMANING O'ZI VA TEXNIK KUCHI, CHIP VA PARAMETRLARIGA e'tibor qarat!
+5. Har doim yangi devayslar (flagman smartfonlar, noutbuklar, konsollar, aqlli qurilmalar), yangi chiplar (Nvidia GPU, AMD/Intel CPU, Apple Silicon, Qualcomm, NPU), sun'iy intellekt modellari, benchmarklar hamda istiqbolli IT va AI startaplarni (investitsiyalar, innovatsion loyihalar) yorit!
+6. HECH QACHON [...] yoki ... yoki chala gap yozma!
+7. HECH QACHON Markdown yulduzchalaridan (**matn**) foydalanma! Qalin matn uchun faqat <b>matn</b> HTML teglaridan foydalan!
+8. Telegram caption limiti 1024 belgi! Jami matn uzunligi 700-850 belgi bo'lsin.
 """
 
     global LAST_FORMATTER_USED
@@ -602,8 +623,7 @@ Matn: {summary}
 Format:
 ⚡️ <b>Yangi sarlavha</b>
 
-📌 <b>Mohiyati:</b>
-(qisqa 1 ta jumla)
+📌 (qisqa 1 ta jumla. DIQQAT: "Mohiyati:" deb yozma, to'g'ridan-to'g'ri 📌 dan keyin boshla)
 
 <blockquote expandable>📝 <b>Tafsilotlar:</b>
 • (muhim nuqta)
@@ -611,6 +631,8 @@ Format:
 • (natija)</blockquote>
 
 🏷 #Hashtaglar
+
+📡 <b>Manba:</b> ...
 
 [...] belgilarisiz, 600 belgi atrofida.
 """
