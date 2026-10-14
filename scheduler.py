@@ -1,14 +1,15 @@
 import html
 import asyncio
 from datetime import datetime, timezone, timedelta, time
+from typing import Optional
 from aiogram import Bot
-from aiogram.types import FSInputFile
+from aiogram.types import FSInputFile, InlineKeyboardMarkup
 import config
 import database
 import ai_formatter
 from rss_parser import scan_all_feeds
 from ai_formatter import format_news, safe_telegram_caption, generate_daily_digest
-from bot_handlers import get_moderation_keyboard
+from bot_handlers import get_moderation_keyboard, get_channel_post_keyboard
 from media_helper import send_media_robust
 from diagnostics import send_admin_alert
 
@@ -31,8 +32,13 @@ def get_next_morning_time(delay_index: int = 0) -> str:
     morning_time = morning_base + timedelta(minutes=delay_index * spacing)
     return morning_time.astimezone(timezone.utc).isoformat()
 
-async def send_to_channel(bot: Bot, image_url: str, caption: str):
-    """Kanalga rasm yoki matnli xabarni chop etish"""
+async def send_to_channel(
+    bot: Bot,
+    image_url: str,
+    caption: str,
+    reply_markup: Optional[InlineKeyboardMarkup] = None
+):
+    """Kanalga rasm yoki matnli xabarni inline tugmalar bilan birga chop etish"""
     try:
         full_photo_caption = safe_telegram_caption(caption, config.CHANNEL_FOOTER, max_len=1024)
         if image_url:
@@ -40,7 +46,8 @@ async def send_to_channel(bot: Bot, image_url: str, caption: str):
                 bot=bot,
                 chat_id=config.CHANNEL_ID,
                 media_url=image_url,
-                caption=full_photo_caption
+                caption=full_photo_caption,
+                reply_markup=reply_markup
             )
             if sent:
                 return True
@@ -49,7 +56,8 @@ async def send_to_channel(bot: Bot, image_url: str, caption: str):
         await bot.send_message(
             chat_id=config.CHANNEL_ID,
             text=text_msg,
-            parse_mode="HTML"
+            parse_mode="HTML",
+            reply_markup=reply_markup
         )
         return True
     except Exception as e:
@@ -116,7 +124,8 @@ async def check_due_scheduled_posts(bot: Bot):
     now_str = datetime.now(timezone.utc).isoformat()
     await database.set_post_status(post["id"], "published", published_at=now_str)
     try:
-        await send_to_channel(bot, post["image_url"], post["uz_caption"])
+        channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"))
+        await send_to_channel(bot, post["image_url"], post["uz_caption"], reply_markup=channel_kb)
         print(f"[Avto-Reja] Post #{post['id']} kanalga muvaffaqiyatli chiqarildi.")
     except Exception as e:
         print(f"[Avto-Reja Xatolik] Post #{post['id']}: {e}")
@@ -250,7 +259,8 @@ async def process_news_cycle(bot: Bot) -> int:
                         published_at=now_str
                     )
                     try:
-                        await send_to_channel(bot, item["image_url"], uz_caption)
+                        channel_kb = await get_channel_post_keyboard(post_id=post_id, original_url=item["url"])
+                        await send_to_channel(bot, item["image_url"], uz_caption, reply_markup=channel_kb)
                         processed_count += 1
                         print(f"[Avto-Chiqarish] '{item['title']}' kanalga joylandi.")
                     except Exception as e:

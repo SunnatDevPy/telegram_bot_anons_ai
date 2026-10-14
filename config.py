@@ -15,6 +15,12 @@ CHANNEL_ID = os.getenv("CHANNEL_ID", "-1002229527376").strip()
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@grand_mobile_anons").strip()
 CHANNEL_LINK = os.getenv("CHANNEL_LINK", f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}").strip()
 
+# Bot username va interaktiv kanal tugmalari sozlamalari
+BOT_USERNAME = os.getenv("BOT_USERNAME", "neuratech_news_bot").strip().lstrip("@")
+BOT_LINK = f"https://t.me/{BOT_USERNAME}"
+ENABLE_CHANNEL_BUTTONS = os.getenv("ENABLE_CHANNEL_BUTTONS", "True").lower() in ("true", "1", "yes")
+DISCUSSION_CHAT_LINK = os.getenv("DISCUSSION_CHAT_LINK", "").strip()
+
 # Gemini API kalitlari hovuzi (Multi-Key Pool)
 def get_gemini_api_keys() -> list:
     keys = []

@@ -59,6 +59,10 @@ async def init_db():
                 "INSERT OR IGNORE INTO settings (key, value) VALUES ('admin_id', ?)",
                 (str(config.INITIAL_ADMIN_ID),)
             )
+        await db.execute(
+            "INSERT OR IGNORE INTO settings (key, value) VALUES ('channel_buttons', ?)",
+            ("1" if getattr(config, "ENABLE_CHANNEL_BUTTONS", True) else "0",)
+        )
         await db.commit()
 
     await load_emojis_to_config()

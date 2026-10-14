@@ -19,27 +19,27 @@ flowchart LR
 ---
 
 ### 1-Bosqich: 🚨 Monitoring & Salomatlik Tizimi (Admin Alerts & Healthcheck)
-> **Maqsad:** Botda biror muammo (API tugashi, tarmoq uzilishi, xatolik) yuz bersa, admin zudlik bilan xabardor bo'lishi va serverga kirmasdan bot holatini ko'ra olishi.
+> **Holati:** ✅ Bajarildi va Serverda Faol
 
-- [ ] **Admin Error Alert (Avtomatik Ogohlantirish):**
+- [x] **Admin Error Alert (Avtomatik Ogohlantirish):**
   - Gemini API kalitlarining barchasida kvota tugasa (429) yoki xatolik bersa — adminga shaxsiy xabar: *"⚠️ Diqqat: Gemini API kvotasi tugadi, xabarlar Google Translate fallback rejimiga o'tdi"*.
   - Telegram kanalga post chiqarishda huquq yoki tarmoq muammosi bo'lsa darhol xabar yuborish.
-- [ ] **`/status` buyrug'i (Tezkor Diagnostika):**
+- [x] **`/status` va `/health` buyruqlari (Tezkor Diagnostika):**
   - Server parametrlari (RAM, CPU, Uptime).
-  - Gemini API kalitlari holati (qaysi biri ishlayapti, qaysi biri kvotada).
+  - Gemini API kalitlari holati (parallel ping, qaysi biri ishlayapti, qaysi biri kvotada).
   - Oxirgi chop etilgan post vaqti va navbatda kutilayotgan postlar soni.
-  - SQLite ma'lumotlar bazasi hajmi.
+  - SQLite ma'lumotlar bazasi hajmi va obunachilar statistikasi.
 
 ---
 
 ### 2-Bosqich: 📢 Kanal Postlariga Interaktiv Tugmalar (Inline Buttons)
-> **Maqsad:** Kanalga chiquvchi postlar ko'rinishini zamonaviylashtirish va kanal obunachilarini botga jalb qilish (CTR oshirish).
+> **Holati:** ✅ Bajarildi va Serverda Faol
 
-- [ ] Post ostiga ixcham inline tugmalar bloki:
+- [x] Post ostiga ixcham inline tugmalar bloki:
   - 🔗 **`Asl maqola (Manba) ↗`** — yangilikning rasmiy manziliga o'tish.
-  - 🤖 **`AI bilan muhokama qilish`** — botning "AI Maslahatchi" menyusiga yo'naltiruvchi deep-link (`t.me/neuratech_news_bot?start=discuss_POSTID`).
-  - 💬 **`Fikr bildirish`** — kanal muhokama guruhiga o'tish havolasi.
-- [ ] Tugmalarni `.env` orqali yoqish/o'chirish imkoniyati.
+  - 🤖 **`AI bilan muhokama qilish`** — botning "AI Maslahatchi" menyusiga yo'naltiruvchi deep-link (`t.me/neuratech_news_bot?start=discuss_POSTID`). Maqola bo'yicha maxsus kontekstli savol-javob rejimi.
+  - 💬 **`Fikr bildirish`** — kanal muhokama guruhiga o'tish havolasi (agar guruh ulangan bo'lsa).
+- [x] Tugmalarni `.env` va **Admin panel** (`🔘 Kanal tugmalari`) orqali yoqish/o'chirish imkoniyati.
 
 ---
 

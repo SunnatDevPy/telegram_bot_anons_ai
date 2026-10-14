@@ -520,9 +520,26 @@ QOIDALAR:
     lines.append("</blockquote>\n\n🏷 #NeuraTech #Dayjest #AI #IT")
     return apply_premium_emojis("".join(lines))
 
-async def answer_ai_assistant_question(question: str) -> str:
-    """Foydalanuvchilarning savollariga NeuraTech AI sifatida o'zbek tilida javob berish"""
-    prompt = f"""Sen — "{config.CHANNEL_USERNAME}" botining intellektual Sun'iy Intellekt maslahatchisisan (NeuraTech AI).
+async def answer_ai_assistant_question(question: str, article_context: Optional[str] = None) -> str:
+    """Foydalanuvchilarning savollariga NeuraTech AI sifatida o'zbek tilida javob berish (maqola konteksti bilan yoki umumiy)"""
+    if article_context:
+        prompt = f"""Sen — "{config.CHANNEL_USERNAME}" Telegram kanali va botining intellektual Sun'iy Intellekt maslahatchisisan (NeuraTech AI).
+Foydalanuvchi kanalda e'lon qilingan quyidagi yangilik/maqola yuzasidan savol bermoqda:
+
+MAQOLA MAZMUNI:
+{article_context}
+
+FOYDALANUVCHI SAVOLI:
+"{question}"
+
+QOIDALAR:
+1. O'zbek tilida juda samimiy, tushunarli, aniq va professional javob ber.
+2. Maqola mazmuniga bevosita tayangan holda savolga javob ber. Agar foydalanuvchi maqoladagi atama yoki yangilik haqida so'rasa, uni o'zbek tilida sodda qilib tushuntirib ber.
+3. Javob juda uzun bo'lmasin (maksimal 2-3 ta qisqa abzas, 500-800 belgi).
+4. Telegram HTML teglaridan (<b>, <i>, <code>) to'g'ri foydalan. Markdown (**yoki *) ishlatma!
+"""
+    else:
+        prompt = f"""Sen — "{config.CHANNEL_USERNAME}" botining intellektual Sun'iy Intellekt maslahatchisisan (NeuraTech AI).
 Foydalanuvchi quyidagi savolni yo'lladi:
 "{question}"
 
@@ -530,7 +547,7 @@ QOIDALAR:
 1. O'zbek tilida juda samimiy, aniq, lo'nda va professional tarzda javob ber.
 2. Savol IT, sun'iy intellekt, gadjetlar, noutbuklar, dasturlash yoki texnologiyaga oid bo'lsa, eng so'nggi ma'lumotlar bilan tavsiya ber.
 3. Javob juda uzun bo'lmasin (maksimal 2-3 ta qisqa abzas, 500-750 belgi).
-4. Telegram HTML teglaridan (<b>, <i>, <code>) to'g'ri foydalan.
+4. Telegram HTML teglaridan (<b>, <i>, <code>) to'g'ri foydalan. Markdown (**yoki *) ishlatma!
 """
     raw = await execute_gemini_prompt(prompt)
     if raw:
