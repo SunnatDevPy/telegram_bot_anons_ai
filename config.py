@@ -1,4 +1,16 @@
 import os
+import sys
+
+# Windows konsolida emojilar bilan ishlaganda UnicodeEncodeError bo'lmasligi uchun
+if sys.platform == "win32":
+    try:
+        if hasattr(sys.stdout, "reconfigure"):
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if hasattr(sys.stderr, "reconfigure"):
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -47,6 +59,10 @@ INITIAL_ADMIN_ID = int(raw_admin_id) if raw_admin_id.isdigit() else None
 
 CHECK_INTERVAL_MINUTES = int(os.getenv("CHECK_INTERVAL_MINUTES", "25"))
 DEFAULT_MODE = os.getenv("DEFAULT_MODE", "moderation").strip().lower()
+
+# Postlar orasidagi oraliq vaqt (daqiqada) va maksimal navbat sig'imi (eskirib ketmasligi uchun)
+POST_SPACING_MINUTES = int(os.getenv("POST_SPACING_MINUTES", "10"))
+MAX_SCHEDULED_QUEUE = int(os.getenv("MAX_SCHEDULED_QUEUE", "6"))
 
 # Tungi tinchlik rejimi (Toshkent vaqti bilan 23:30 dan 07:30 gacha)
 NIGHT_MODE_START_HOUR = 23

@@ -309,6 +309,27 @@ async def cancel_scheduled_post(post_id: int) -> bool:
         await db.commit()
         return True
 
+async def clear_all_scheduled_posts() -> int:
+    """Barcha navbatda turgan postlarni bekor qilish va navbatni tozalash"""
+    async with get_db() as db:
+        cursor = await db.execute("UPDATE posts SET status = 'rejected' WHERE status = 'scheduled'")
+        count = cursor.rowcount
+        await db.commit()
+        return count
+
+async def cancel_stale_scheduled_posts(max_future_hours: int = 4) -> int:
+    """Rejalashtirilgan vaqti juda uzoqqa (masalan, 4 soatdan ortiqqa) cho'zilib ketgan yoki eskirgan postlarni bekor qilish"""
+    now = datetime.now(timezone.utc)
+    threshold = (now + timedelta(hours=max_future_hours)).isoformat()
+    async with get_db() as db:
+        cursor = await db.execute(
+            "UPDATE posts SET status = 'rejected' WHERE status = 'scheduled' AND scheduled_at > ?",
+            (threshold,)
+        )
+        count = cursor.rowcount
+        await db.commit()
+        return count
+
 async def register_user(
     user_id: int,
     username: Optional[str] = None,

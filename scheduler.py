@@ -186,14 +186,28 @@ async def process_news_cycle(bot: Bot) -> int:
     # 1. Rejalashtirilgan postlarni tekshirish
     await check_due_scheduled_posts(bot)
 
+    # Navbatni tekshirish: Agar navbatda allaqachon yetarlicha post bo'lsa, AI kvotasini behuda sarflamaslik
+    current_queue = await database.get_scheduled_count()
+    max_queue = getattr(config, "MAX_SCHEDULED_QUEUE", 6)
+    if mode == "auto" and current_queue >= max_queue:
+        print(f"[Monitoring] Navbat to'la ({current_queue}/{max_queue} ta post). Yangiliklar eskirib ketmasligi va AI kvotasi tejalishi uchun navbat bo'shashi kutilmoqda.")
+        return 0
+
     # 2. Yangi RSS xabarlarini skanerlash
     new_items = await scan_all_feeds(limit_per_feed=2)
-    # Bitta siklda eng sara va dolzarb 3 ta yangilik olinadi (API limit va navbat tiqilib qolmasligi uchun)
-    new_items = new_items[:3]
+
+    # AQLIY FILTRLASH: AI kvotasini tejash uchun faqat eng yuqori dolzarblikdagi (priority) sara yangiliklarni saralash
+    # Bitta siklda 1 yoki uzog'i bilan 2 ta eng sara xabar olinadi
+    high_priority = [it for it in new_items if it.get("priority", 0) >= 25]
+    if high_priority:
+        selected_items = high_priority[:2]
+    else:
+        selected_items = new_items[:1] if new_items else []
+
     processed_count = 0
     in_night = is_night_mode_active()
 
-    for item in new_items:
+    for item in selected_items:
         uz_caption = await format_news(
             title=item["title"],
             summary=item["summary"],
@@ -271,6 +285,13 @@ async def process_news_cycle(bot: Bot) -> int:
                     except Exception as e:
                         print(f"[Avto-Chiqarish Xatolik]: {e}")
                 else:
+                    # Navbat to'lib ketishi va yangiliklar eskirib ketmasligi uchun tekshiruv
+                    current_queue = await database.get_scheduled_count()
+                    max_queue = getattr(config, "MAX_SCHEDULED_QUEUE", 6)
+                    if current_queue >= max_queue:
+                        print(f"[Avto-Navbat To'lgan] Hozirda {current_queue} ta post navbatda. Yangilik eskirib ketmasligi uchun navbatga qo'shilmadi: '{item['title']}'")
+                        continue
+
                     # Aks holda kamida 10 daqiqa oraliq bilan navbatga (scheduled) qo'yiladi
                     anchor_time = now_utc
                     if last_sched_str:
@@ -375,6 +396,8 @@ async def run_scheduler_worker(bot: Bot):
                     await check_due_scheduled_posts(bot)
                     await check_daily_digest(bot)
                     await check_daily_backup(bot)
+                    # Eskirgan (4 soatdan ortiqqa cho'zilib ketgan) navbatlarni avtomatik tozalash
+                    await database.cancel_stale_scheduled_posts(max_future_hours=4)
                 except Exception as sub_e:
                     print(f"[Scheduler Oraliq Tekshiruv Xatolik]: {sub_e}")
         except Exception as outer_e:

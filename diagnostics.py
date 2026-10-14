@@ -116,72 +116,33 @@ async def check_gemini_keys_health(force_refresh: bool = False) -> List[Dict[str
         return cached_statuses
 
     keys = config.get_gemini_api_keys()
-    async def ping_single_key(idx: int, key: str) -> Dict[str, Any]:
+    statuses = []
+    for idx, key in enumerate(keys, 1):
         masked = key[:6] + "..." + key[-4:] if len(key) > 10 else f"Key-{idx}"
         p_data = pool_reports.get(idx, {})
         req_cnt = p_data.get("requests", 0)
         succ_cnt = p_data.get("success", 0)
 
         if p_data.get("cooldown"):
-            return {
-                "index": idx,
-                "masked": masked,
-                "status": p_data["status"],
-                "requests": req_cnt,
-                "success": succ_cnt
-            }
+            status_str = p_data.get("status", "🟡 Sovutishda (429)")
+        elif succ_cnt > 0:
+            status_str = f"🟢 Faol ({succ_cnt} ta post)"
+        elif idx <= len(GEMINI_POOL.nodes) and GEMINI_POOL.nodes[idx - 1].client is not None:
+            status_str = "🟢 Faol (Tayyor)"
+        else:
+            status_str = "🔴 Ulanmagan"
 
-        status_str = "🔴 Xato"
-        try:
-            client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=15000))
-            for m_name in ["gemini-3-flash-preview", "gemini-3.1-flash-lite-preview"]:
-                try:
-                    resp = await asyncio.wait_for(
-                        asyncio.to_thread(
-                            client.models.generate_content,
-                            model=m_name,
-                            contents="Ping"
-                        ),
-                        timeout=12.0
-                    )
-                    if resp and resp.text:
-                        status_str = f"🟢 Faol ({m_name.replace('-preview', '')})"
-                        break
-                except Exception as sub_e:
-                    err_sub = str(sub_e)
-                    if "429" in err_sub or "ResourceExhausted" in err_sub:
-                        status_str = "🟡 429 (Kvotada)"
-                        if idx <= len(GEMINI_POOL.nodes):
-                            GEMINI_POOL.nodes[idx - 1].trigger_cooldown(300, "429 Quota")
-                    elif "503" in err_sub:
-                        status_str = "🟡 503 (Band)"
-                    else:
-                        status_str = "🔴 Xatolik"
-        except asyncio.TimeoutError:
-            status_str = "🟡 Timeout (Sekin)"
-        except Exception as e:
-            err = str(e)
-            if "429" in err or "ResourceExhausted" in err:
-                status_str = "🟡 429 (Kvotada)"
-                if idx <= len(GEMINI_POOL.nodes):
-                    GEMINI_POOL.nodes[idx - 1].trigger_cooldown(300, "429 Quota")
-            else:
-                status_str = "🔴 Xatolik"
-
-        return {
+        statuses.append({
             "index": idx,
             "masked": masked,
             "status": status_str,
             "requests": req_cnt,
             "success": succ_cnt
-        }
-
-    tasks = [ping_single_key(i, k) for i, k in enumerate(keys, 1)]
-    statuses = await asyncio.gather(*tasks)
+        })
 
     _GEMINI_KEY_CACHE = {
         "checked_at": now,
-        "statuses": list(statuses)
+        "statuses": statuses
     }
     return statuses
 

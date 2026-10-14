@@ -147,10 +147,10 @@ async def execute_gemini_prompt(prompt: str) -> Optional[str]:
     - Zudlik bilan navbatdagi zaxira kalitga uzatiladi.
     """
     candidate_models = [
-        "gemini-3-flash-preview",
         "gemini-3.1-flash-lite-preview",
-        "gemini-flash-latest",
-        "gemini-3.8-flash"
+        "gemini-3-flash-preview",
+        "gemini-3.8-flash",
+        "gemini-flash-latest"
     ]
     nodes = GEMINI_POOL.get_ordered_nodes()
     if not nodes:

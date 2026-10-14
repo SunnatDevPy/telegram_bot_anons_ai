@@ -294,9 +294,10 @@ async def render_queue_page(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
     if nav_row:
         kb_buttons.append(nav_row)
 
-    # Tezkor chiqarish
+    # Tezkor chiqarish va Navbatni tozalash
     kb_buttons.append([
-        InlineKeyboardButton(text="🚀 Eng birinchi postni hoziroq chiqarish", callback_data="queue_pub_first")
+        InlineKeyboardButton(text="🚀 1-postni hoziroq chiqarish", callback_data="queue_pub_first"),
+        InlineKeyboardButton(text="🗑 Navbatni tozalash", callback_data="clear_entire_queue")
     ])
 
     # Qaytish
@@ -1196,6 +1197,38 @@ async def cb_queue_pub_first(call: CallbackQuery, bot: Bot):
         await call.answer(f"Xatolik: {e}", show_alert=True)
         return
 
+    text, kb = await render_queue_page(page=0)
+    try:
+        if call.message.text:
+            await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        else:
+            await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data == "clear_entire_queue")
+async def cb_clear_entire_queue(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Faqat admin uchun!", show_alert=True)
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑 Ha, barcha navbatni tozalash", callback_data="confirm_clear_entire_queue")],
+        [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_queue:0")]
+    ])
+    await call.message.edit_text(
+        "⚠️ <b>Haqiqatan ham rejalashtirilgan barcha navbatdagi postlarni bekor qilmoqchimisiz?</b>\n\n"
+        "Bu eskirib qolgan barcha kutilayotgan postlarni o'chiradi va navbatni nollaydi.",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
+@router.callback_query(F.data == "confirm_clear_entire_queue")
+async def cb_confirm_clear_entire_queue(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Faqat admin uchun!", show_alert=True)
+        return
+    deleted_cnt = await database.clear_all_scheduled_posts()
+    await call.answer(f"Navbat tozalandi! {deleted_cnt} ta post bekor qilindi 🗑", show_alert=True)
     text, kb = await render_queue_page(page=0)
     try:
         if call.message.text:
