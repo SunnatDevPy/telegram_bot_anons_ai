@@ -2,7 +2,8 @@ import os
 import re
 import html
 import asyncio
-from typing import Optional
+from typing import Optional, List, Dict, Any
+from datetime import datetime, timezone, timedelta
 import httpx
 from google import genai
 from google.genai import types
@@ -10,53 +11,183 @@ import config
 
 LAST_FORMATTER_USED = "gemini"
 
-def get_all_clients() -> list:
-    """Barcha mavjud API kalitlar uchun mijozlar ro'yxatini shakllantirish (Multi-Key Pool)"""
-    keys = config.get_gemini_api_keys()
-    clients = []
-    for k in keys:
+class GeminiKeyNode:
+    """Multi-Key hovuzidagi har bir API kalit uchun holat va statistika konteyneri"""
+    def __init__(self, key: str, index: int):
+        self.key = key
+        self.index = index
+        self.masked = key[:6] + "..." + key[-4:] if len(key) > 10 else f"Key-{index}"
+        self.client = None
+        self._init_client()
+        self.cooldown_until: Optional[datetime] = None
+        self.total_requests = 0
+        self.total_success = 0
+        self.total_errors = 0
+        self.consecutive_errors = 0
+        self.last_error = ""
+        self.last_used: Optional[datetime] = None
+
+    def _init_client(self):
         try:
-            clients.append(genai.Client(
-                api_key=k,
+            self.client = genai.Client(
+                api_key=self.key,
                 http_options=types.HttpOptions(timeout=15000)
-            ))
+            )
         except Exception as e:
-            print(f"[Gemini Client Init Xatolik]: {e}")
-    return clients
+            print(f"[Gemini Client Init Xatolik Key #{self.index}]: {e}")
+            self.client = None
+
+    def is_available(self) -> bool:
+        if self.cooldown_until is None:
+            return True
+        now = datetime.now(timezone.utc)
+        return now >= self.cooldown_until
+
+    def trigger_cooldown(self, seconds: int = 300, reason: str = "429 Quota"):
+        now = datetime.now(timezone.utc)
+        self.cooldown_until = now + timedelta(seconds=seconds)
+        self.last_error = f"{reason} ({seconds}s)"
+        self.consecutive_errors += 1
+        self.total_errors += 1
+        print(f"[Gemini KeyPool] Kalit #{self.index} ({self.masked}) {reason} tufayli {seconds} soniyaga sovutish rejimiga o'tkazildi.")
+
+    def record_success(self):
+        self.total_requests += 1
+        self.total_success += 1
+        self.consecutive_errors = 0
+        self.cooldown_until = None
+        self.last_used = datetime.now(timezone.utc)
+
+class GeminiKeyPool:
+    """
+    Gemini API kalitlari uchun yuklamani teng taqsimlash (Round-Robin)
+    va avtomatik nosozlikdan qochish (Smart Failover & Cooldown) menejeri
+    """
+    def __init__(self):
+        self.nodes: List[GeminiKeyNode] = []
+        self._rr_index = 0
+        self.init_pool()
+
+    def init_pool(self):
+        keys = config.get_gemini_api_keys()
+        self.nodes = [GeminiKeyNode(k, i + 1) for i, k in enumerate(keys) if k.strip()]
+
+    def get_ordered_nodes(self) -> List[GeminiKeyNode]:
+        """Round-Robin bo'yicha navbatdagi aktiv kalitdan boshlab ketma-ket ro'yxat shakllantirish"""
+        if not self.nodes:
+            self.init_pool()
+        if not self.nodes:
+            return []
+
+        now = datetime.now(timezone.utc)
+        # 1. Hozirda sovutishda bo'lmagan, tayyor kalitlarni aniqlash
+        active = [n for n in self.nodes if n.is_available() and n.client is not None]
+
+        # 2. Agar barcha kalitlar sovutishda bo'lsa (favqulodda holat), eng tez ochiladiganini sinash
+        if not active:
+            valid_nodes = [n for n in self.nodes if n.client is not None]
+            if not valid_nodes:
+                return []
+            earliest = min(valid_nodes, key=lambda n: n.cooldown_until or now)
+            return [earliest] + [n for n in valid_nodes if n != earliest]
+
+        # 3. Round-Robin bo'yicha aylantirish (so'rovlarni teng taqsimlash)
+        idx = self._rr_index % len(active)
+        self._rr_index = (self._rr_index + 1) % len(active)
+
+        selected = active[idx]
+        other_active = [n for n in active if n != selected]
+        cooldown_nodes = sorted(
+            [n for n in self.nodes if not n.is_available() and n.client is not None],
+            key=lambda n: n.cooldown_until or now
+        )
+        return [selected] + other_active + cooldown_nodes
+
+    def get_status_report(self) -> List[Dict[str, Any]]:
+        """Diagnostika (/status) uchun kalitlar statistikasi va holatini berish"""
+        now = datetime.now(timezone.utc)
+        report = []
+        for n in self.nodes:
+            if n.client is None:
+                st = "🔴 Init Xatolik"
+            elif n.is_available():
+                st = f"🟢 Faol ({n.total_success} muvaffaqiyatli)" if n.total_success > 0 else "🟢 Faol (Ready)"
+            else:
+                rem = int((n.cooldown_until - now).total_seconds()) if n.cooldown_until else 0
+                st = f"🟡 Sovutishda (429 - {max(0, rem)}s qoldi)"
+            report.append({
+                "index": n.index,
+                "masked": n.masked,
+                "status": st,
+                "requests": n.total_requests,
+                "success": n.total_success,
+                "errors": n.total_errors,
+                "consecutive_errors": n.consecutive_errors,
+                "cooldown": not n.is_available()
+            })
+        return report
+
+# Global yagona hovuz nusxasi
+GEMINI_POOL = GeminiKeyPool()
+
+def get_all_clients() -> list:
+    """Barcha mavjud API kalitlar uchun mijozlar ro'yxati (orqaga moslik uchun)"""
+    return [n.client for n in GEMINI_POOL.nodes if n.client is not None]
 
 def get_gemini_client() -> Optional[genai.Client]:
-    clients = get_all_clients()
-    return clients[0] if clients else None
+    """Navbatdagi eng maqbul Gemini klientini olish"""
+    nodes = GEMINI_POOL.get_ordered_nodes()
+    return nodes[0].client if nodes else None
 
 async def execute_gemini_prompt(prompt: str) -> Optional[str]:
-    """Barcha kalitlar va barcha modellar bo'ylab xavfsiz so'rov yuborish (Multi-Key & Multi-Model Pool)"""
+    """
+    Multi-Key Pool (Round-Robin & Smart Failover) orqali so'rov yuborish.
+    - Har bir so'rov kalitlar o'rtasida navbatma-navbat (Round-Robin) taqsimlanadi.
+    - 429 (kvota tugashi) olgan kalit avtomatik 5 daqiqaga sovutish rejimiga qo'yiladi.
+    - Zudlik bilan navbatdagi zaxira kalitga uzatiladi.
+    """
     candidate_models = [
         "gemini-3-flash-preview",
         "gemini-3.1-flash-lite-preview",
         "gemini-flash-latest",
         "gemini-3.8-flash"
     ]
-    clients = get_all_clients()
-    if not clients:
+    nodes = GEMINI_POOL.get_ordered_nodes()
+    if not nodes:
         return None
 
-    # Har bir API kalit bo'yicha ketma-ket urinish
-    for client in clients:
+    # Kalitlar bo'ylab navbat bilan urinish (Round-Robin tartibida)
+    for node in nodes:
+        if node.client is None:
+            continue
         for model_name in candidate_models:
             try:
                 response = await asyncio.wait_for(
                     asyncio.to_thread(
-                        client.models.generate_content,
+                        node.client.models.generate_content,
                         model=model_name,
                         contents=prompt
                     ),
                     timeout=20.0
                 )
                 if response and response.text:
+                    node.record_success()
                     return response.text
-            except (asyncio.TimeoutError, Exception):
-                # 429 (rate limit / quota), 503 yoki timeout bo'lsa, keyingi model yoki keyingi kalitga o'tish
-                continue
+            except (asyncio.TimeoutError, Exception) as e:
+                err_msg = str(e)
+                # 429 kvota limiti tekshiruvi
+                if "429" in err_msg or "ResourceExhausted" in err_msg or "quota" in err_msg.lower():
+                    node.trigger_cooldown(seconds=300, reason="429 Quota")
+                    # Ushbu kalitda boshqa modellarni sinab o'tirmaymiz (chunki kalit kvotasi tugagan),
+                    # zudlik bilan keyingi kalitga o'tamiz!
+                    break
+                elif "503" in err_msg or "unavailable" in err_msg.lower():
+                    node.trigger_cooldown(seconds=60, reason="503 Server Busy")
+                    break
+                else:
+                    node.total_errors += 1
+                    continue
+
     return None
 
 def clean_ugly_symbols(text: str) -> str:

@@ -96,17 +96,41 @@ def get_db_size_str() -> str:
     return "0 KB"
 
 async def check_gemini_keys_health(force_refresh: bool = False) -> List[Dict[str, Any]]:
-    """Gemini API kalitlarini tezkor tekshirish (natija 3 daqiqa keshlanadi)"""
+    """Gemini API kalitlarini tezkor tekshirish (hovuz statistikasi va jonli holat)"""
+    from ai_formatter import GEMINI_POOL
+    pool_reports = {r["index"]: r for r in GEMINI_POOL.get_status_report()}
+
     global _GEMINI_KEY_CACHE
     now = datetime.now(timezone.utc)
     cached_at = _GEMINI_KEY_CACHE.get("checked_at")
 
     if not force_refresh and cached_at and (now - cached_at).total_seconds() < 180:
-        return _GEMINI_KEY_CACHE.get("statuses", [])
+        cached_statuses = _GEMINI_KEY_CACHE.get("statuses", [])
+        for s in cached_statuses:
+            p_data = pool_reports.get(s["index"])
+            if p_data:
+                s["requests"] = p_data.get("requests", 0)
+                s["success"] = p_data.get("success", 0)
+                if p_data.get("cooldown"):
+                    s["status"] = p_data["status"]
+        return cached_statuses
 
     keys = config.get_gemini_api_keys()
     async def ping_single_key(idx: int, key: str) -> Dict[str, Any]:
         masked = key[:6] + "..." + key[-4:] if len(key) > 10 else f"Key-{idx}"
+        p_data = pool_reports.get(idx, {})
+        req_cnt = p_data.get("requests", 0)
+        succ_cnt = p_data.get("success", 0)
+
+        if p_data.get("cooldown"):
+            return {
+                "index": idx,
+                "masked": masked,
+                "status": p_data["status"],
+                "requests": req_cnt,
+                "success": succ_cnt
+            }
+
         status_str = "🔴 Xato"
         try:
             client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=15000))
@@ -125,8 +149,10 @@ async def check_gemini_keys_health(force_refresh: bool = False) -> List[Dict[str
                         break
                 except Exception as sub_e:
                     err_sub = str(sub_e)
-                    if "429" in err_sub:
+                    if "429" in err_sub or "ResourceExhausted" in err_sub:
                         status_str = "🟡 429 (Kvotada)"
+                        if idx <= len(GEMINI_POOL.nodes):
+                            GEMINI_POOL.nodes[idx - 1].trigger_cooldown(300, "429 Quota")
                     elif "503" in err_sub:
                         status_str = "🟡 503 (Band)"
                     else:
@@ -135,12 +161,20 @@ async def check_gemini_keys_health(force_refresh: bool = False) -> List[Dict[str
             status_str = "🟡 Timeout (Sekin)"
         except Exception as e:
             err = str(e)
-            if "429" in err:
+            if "429" in err or "ResourceExhausted" in err:
                 status_str = "🟡 429 (Kvotada)"
+                if idx <= len(GEMINI_POOL.nodes):
+                    GEMINI_POOL.nodes[idx - 1].trigger_cooldown(300, "429 Quota")
             else:
                 status_str = "🔴 Xatolik"
 
-        return {"index": idx, "masked": masked, "status": status_str}
+        return {
+            "index": idx,
+            "masked": masked,
+            "status": status_str,
+            "requests": req_cnt,
+            "success": succ_cnt
+        }
 
     tasks = [ping_single_key(i, k) for i, k in enumerate(keys, 1)]
     statuses = await asyncio.gather(*tasks)
@@ -223,7 +257,8 @@ def format_health_html(data: Dict[str, Any]) -> str:
     """Diagnostika hisobotini chiroyli Telegram HTML ko'rinishida formatlash"""
     keys_lines = []
     for k in data["gemini_statuses"]:
-        keys_lines.append(f"  • Kalit #{k['index']} (<code>{k['masked']}</code>): {k['status']}")
+        req_info = f" [⚡️ {k.get('success', 0)} ta post]" if k.get('success', 0) > 0 else ""
+        keys_lines.append(f"  • Kalit #{k['index']} (<code>{k['masked']}</code>): {k['status']}{req_info}")
     keys_text = "\n".join(keys_lines) if keys_lines else "  • Kalitlar topilmadi"
 
     text = (

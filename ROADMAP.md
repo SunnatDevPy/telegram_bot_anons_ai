@@ -87,11 +87,12 @@ flowchart LR
 
 ---
 
-### 7-Bosqich: ⚡️ Gemini Multi-Key Hovuzini Optimallashtirish (Load Balancing)
-> **Maqsad:** 2-3 ta Gemini API kalitini teng va aqlli taqsimlash.
+### 7-Bosqich: ⚡️ Gemini Multi-Key Hovuzini Optimallashtirish (Load Balancing & Smart Failover)
+> **Holati:** ✅ Bajarildi va Serverda Faol
 
-- [ ] **Round-Robin (Ketma-ket aylantirish):** Faqat bitta kalitga doimiy urilmasdan, so'rovlarni 1-kalit, 2-kalit, 3-kalit o'rtasida teng taqsimlash (yuklamani 3 barobar pasaytiradi).
-- [ ] **Avto-Failover:** Agar biror kalit 429 olsa, uni 5 daqiqaga keshda "uyqu"ga qo'yib, faqat tirik kalitlarga so'rov yuborish.
+- [x] **Round-Robin (Ketma-ket aylantirish):** So'rovlar kalitlar (1-kalit, 2-kalit, 3-kalit) o'rtasida teng taqsimlanadi, har bir kalitdagi yuklama 3 barobarga qisqartirildi.
+- [x] **Avto-Failover & 5 Daqiqalik Cooldown:** Agar biror kalit 429 (kvota tugashi) olsa, u avtomatik tarzda 300 soniyaga (5 min) "sovutish" rejimiga qo'yiladi va navbatdagi so'rovlar darhol sog'lom kalitlarga uzatiladi.
+- [x] **Jonli Statistika & Diagnostika:** Har bir kalitning ishlagan so'rovlari va holati real vaqtda `/status` hisobotida ko'rsatiladi.
 
 ---
 
