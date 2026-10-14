@@ -118,3 +118,7 @@ async def check_daily_backup(bot: Bot):
     if success:
         await database.set_setting("last_daily_backup_date", today_str)
         print(f"[Kunlik Avto-Backup] Baza nusxasi adminga ({admin_id}) muvaffaqiyatli yetkazildi! 💾")
+
+if __name__ == "__main__":
+    zip_bytes, fname, orig, compressed = create_safe_sqlite_backup()
+    print(f"OK: {fname} | Orig: {orig} bytes | Zip: {compressed} bytes")
