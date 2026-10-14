@@ -337,6 +337,36 @@ def safe_telegram_caption(caption: str, footer: str = "", max_len: int = 1024) -
         result += "\n\n" + footer_text.strip()
     return result
 
+def attach_source_link(text: str, source_name: str, original_url: str) -> str:
+    """Post matnidagi '📡 Manba: ...' qismiga asl havola (link) ni chiroyli biriktirish"""
+    if not text or not original_url:
+        return text
+
+    safe_url = original_url.strip()
+    if not safe_url.startswith("http") or safe_url in text:
+        return text
+
+    safe_source = html.escape(source_name) if source_name else "Batafsil"
+
+    # '📡 <b>Manba:</b> Sayt' yoki '📡 Manba: Sayt' qatorini topish
+    pattern = r'((?:<b>)?\s*📡\s*(?:<b>)?\s*Manba:?\s*(?:</b>)?\s*)([^<\n]+)'
+    def repl(m):
+        prefix = m.group(1)
+        found_name = m.group(2).strip()
+        display_name = found_name if found_name else safe_source
+        return f'{prefix}<a href="{safe_url}">{display_name}</a>'
+
+    new_text, n = re.subn(pattern, repl, text, count=1, flags=re.IGNORECASE)
+    if n > 0:
+        return new_text
+
+    link_html = f'📡 <b>Manba:</b> <a href="{safe_url}">{safe_source}</a>'
+    if "</blockquote>" in text:
+        return text.replace("</blockquote>", f"\n\n{link_html}</blockquote>")
+    if "🏷" in text:
+        return text.replace("🏷", f"{link_html}\n\n🏷")
+    return text.rstrip() + f"\n\n{link_html}"
+
 async def fallback_formatter(title: str, summary: str, source_name: str, original_url: str = "") -> str:
     """Gemini ishlamagan taqdirda o'zbekcha tarjima qilib, ochiluvchi sitata (blockquote expandable) bilan xavfsiz formatlash"""
     clean_title = clean_ugly_symbols(title)
@@ -365,7 +395,7 @@ async def fallback_formatter(title: str, summary: str, source_name: str, origina
     more_details = html.escape(clean_ugly_symbols(more_details_raw[:350]))
     safe_source = html.escape(source_name)
 
-    link_part = f"\n\n🔗 <a href='{original_url}'>Batafsil o'qish ↗</a>" if original_url else ""
+    source_link = f"<a href='{original_url}'>{safe_source}</a>" if original_url else safe_source
 
     post = (
         f"⚡️ <b>{uz_title}</b>\n\n"
@@ -373,7 +403,7 @@ async def fallback_formatter(title: str, summary: str, source_name: str, origina
         f"{essence}\n\n"
         f"<blockquote expandable>📝 <b>Batafsil ma'lumot:</b>\n"
         f"{more_details}\n\n"
-        f"📡 <b>Manba:</b> {safe_source}{link_part}</blockquote>\n\n"
+        f"📡 <b>Manba:</b> {source_link}</blockquote>\n\n"
         f"🏷 #AI #IT #Texnologiya #Yangiliklar"
     )
     spaced = format_paragraph_spacing(post)
@@ -424,6 +454,7 @@ QOIDALAR:
     if raw_text:
         cleaned = sanitize_telegram_html(raw_text)
         cleaned = fix_blockquote_tags(cleaned)
+        cleaned = attach_source_link(cleaned, source_name, original_url)
         cleaned = format_paragraph_spacing(cleaned)
         LAST_FORMATTER_USED = "gemini"
         return apply_premium_emojis(cleaned)

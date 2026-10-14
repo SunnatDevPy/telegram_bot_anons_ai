@@ -14,7 +14,10 @@ from aiogram.exceptions import TelegramBadRequest
 
 import config
 import database
-from ai_formatter import regenerate_news, safe_telegram_caption, answer_ai_assistant_question
+from ai_formatter import (
+    regenerate_news, safe_telegram_caption, answer_ai_assistant_question,
+    attach_source_link
+)
 from media_helper import send_media_robust, send_user_preview_media
 from diagnostics import get_system_health, format_health_html
 
@@ -96,12 +99,19 @@ def get_emojis_keyboard() -> InlineKeyboardMarkup:
     ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-def get_admin_keyboard(mode: str, interval: int, buttons_enabled: bool = True, queue_count: int = 0) -> InlineKeyboardMarkup:
+def get_admin_keyboard(
+    mode: str,
+    interval: int,
+    source_btn_enabled: bool = False,
+    ai_btn_enabled: bool = False,
+    queue_count: int = 0
+) -> InlineKeyboardMarkup:
     """Admin boshqaruv paneli tugmalari (Asosiy harakatlar yashil rangda)"""
     mode_btn_text = "🟢 Rejim: Avtomatik (Faol)" if mode == "auto" else "🟡 Rejim: Moderatsiya (Tasdiqlash)"
     toggle_mode = "moderation" if mode == "auto" else "auto"
 
-    buttons_btn_text = "🔘 Kanal tugmalari: 🟢 Faol" if buttons_enabled else "🔘 Kanal tugmalari: 🔴 O'chirilgan"
+    source_btn_text = "🔗 Manba: 🟢 Faol" if source_btn_enabled else "🔗 Manba: 🔴 O'chirilgan"
+    ai_btn_text = "🤖 AI Maslahat: 🟢 Faol" if ai_btn_enabled else "🤖 AI Maslahat: 🔴 O'chirilgan"
 
     queue_btn_text = f"📋 Postlar Navbati ({queue_count} ta)" if queue_count > 0 else "📋 Postlar Navbati (Bo'sh)"
 
@@ -116,7 +126,8 @@ def get_admin_keyboard(mode: str, interval: int, buttons_enabled: bool = True, q
             InlineKeyboardButton(text=queue_btn_text, callback_data="admin_queue:0")
         ],
         [
-            InlineKeyboardButton(text=buttons_btn_text, callback_data="toggle_channel_buttons")
+            InlineKeyboardButton(text=source_btn_text, callback_data="toggle_source_btn"),
+            InlineKeyboardButton(text=ai_btn_text, callback_data="toggle_ai_btn")
         ],
         [
             InlineKeyboardButton(text="📊 Holat (/status)", callback_data="view_bot_status"),
@@ -242,17 +253,22 @@ async def render_queue_page(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=kb_buttons)
 
 async def get_channel_post_keyboard(post_id: Optional[int] = None, original_url: Optional[str] = None) -> Optional[InlineKeyboardMarkup]:
-    """Kanalga chiquvchi post ostiga ixcham inline tugmalar bloki"""
-    buttons_enabled = await database.get_setting("channel_buttons", "1")
-    if buttons_enabled != "1":
+    """Kanalga chiquvchi post ostiga ixcham inline tugmalar bloki (Manba va AI maslahat alohida boshqariladi)"""
+    default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", False) else "0"
+    default_ai = "1" if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", False) else "0"
+    source_btn_enabled = (await database.get_setting("channel_source_btn", default_src) == "1")
+    ai_btn_enabled = (await database.get_setting("channel_ai_btn", default_ai) == "1")
+
+    # Agar ikkala tugma ham o'chirilgan bo'lsa, xabar ostiga umuman tugma qo'yilmaydi (chiroyli toza xabar)
+    if not source_btn_enabled and not ai_btn_enabled:
         return None
 
     buttons = []
     row1 = []
-    if original_url and str(original_url).startswith("http"):
-        row1.append(InlineKeyboardButton(text="🔗 Asl maqola ↗", url=str(original_url)))
+    if source_btn_enabled and original_url and str(original_url).startswith("http"):
+        row1.append(InlineKeyboardButton(text="🔗 Manba ↗", url=str(original_url)))
 
-    if post_id:
+    if ai_btn_enabled and post_id:
         bot_user = getattr(config, "BOT_USERNAME", "neuratech_news_bot").lstrip("@")
         row1.append(InlineKeyboardButton(
             text="🤖 AI bilan muhokama",
@@ -273,9 +289,12 @@ async def get_rendered_admin_panel() -> tuple[str, InlineKeyboardMarkup]:
     text = await format_panel_text()
     mode = await database.get_setting("mode", "moderation")
     interval = int(await database.get_setting("interval_minutes", "25"))
-    buttons_enabled = (await database.get_setting("channel_buttons", "1") == "1")
+    default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", False) else "0"
+    default_ai = "1" if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", False) else "0"
+    source_btn_enabled = (await database.get_setting("channel_source_btn", default_src) == "1")
+    ai_btn_enabled = (await database.get_setting("channel_ai_btn", default_ai) == "1")
     queue_count = await database.get_scheduled_count()
-    return text, get_admin_keyboard(mode, interval, buttons_enabled, queue_count)
+    return text, get_admin_keyboard(mode, interval, source_btn_enabled, ai_btn_enabled, queue_count)
 
 def get_moderation_keyboard(post_id: int) -> InlineKeyboardMarkup:
     """Moderatsiya uchun har bir post ostidagi tugmalar (Asosiy chiqarish tugmasi yashil belgi bilan)"""
@@ -312,8 +331,12 @@ async def check_is_admin(user_id: int) -> bool:
 async def format_panel_text() -> str:
     mode = await database.get_setting("mode", "moderation")
     interval = await database.get_setting("interval_minutes", "25")
-    buttons_setting = await database.get_setting("channel_buttons", "1")
-    buttons_display = "🟢 Faol (Ulanmoqda)" if buttons_setting == "1" else "🔴 O'chirilgan"
+    default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", False) else "0"
+    default_ai = "1" if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", False) else "0"
+    source_btn_setting = await database.get_setting("channel_source_btn", default_src)
+    ai_btn_setting = await database.get_setting("channel_ai_btn", default_ai)
+    source_btn_display = "🟢 Faol (Tugmada)" if source_btn_setting == "1" else "ℹ️ Matn ichida (Tugmasiz)"
+    ai_btn_display = "🟢 Faol" if ai_btn_setting == "1" else "🔴 O'chirilgan"
     stats = await database.get_stats()
     gemini_status = "🟢 Ulangan (Multi-Key)" if config.GEMINI_API_KEY else "🔴 Kalit kiritilmagan (.env)"
 
@@ -325,7 +348,8 @@ async def format_panel_text() -> str:
         f"⚙️ <b>Sozlamalar:</b>\n"
         f"• <b>Rejim:</b> {mode_display}\n"
         f"• <b>Vaqt oralig'i:</b> Har {interval} daqiqada\n"
-        f"• <b>Kanal tugmalari:</b> {buttons_display}\n"
+        f"• <b>Manba tugmasi:</b> {source_btn_display}\n"
+        f"• <b>AI Maslahatchi:</b> {ai_btn_display}\n"
         f"• <b>Oxirgi zaxira (Backup):</b> <code>{last_backup}</code>\n"
         f"• <b>Kanal:</b> <code>{config.CHANNEL_ID}</code> (<a href='{config.CHANNEL_LINK}'>{config.CHANNEL_USERNAME}</a>)\n"
         f"• <b>Google Gemini AI:</b> {gemini_status}\n\n"
@@ -640,7 +664,7 @@ async def cb_user_post(call: CallbackQuery):
 
     nav_row = [InlineKeyboardButton(text="⬅️ Top 10 ro'yxatiga qaytish", callback_data="user_refresh_top")]
     if post.get("url"):
-        nav_row.insert(0, InlineKeyboardButton(text="🔗 Asl maqola ↗", url=post["url"]))
+        nav_row.insert(0, InlineKeyboardButton(text="🔗 Manba ↗", url=post["url"]))
 
     back_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤖 Ushbu maqola bo'yicha AI bilan muhokama", callback_data=f"ai_discuss_again:{post_id}")],
@@ -839,17 +863,35 @@ async def cb_set_interval(call: CallbackQuery):
     except Exception:
         pass
 
-@router.callback_query(F.data == "toggle_channel_buttons")
-async def cb_toggle_channel_buttons(call: CallbackQuery):
+@router.callback_query(F.data == "toggle_source_btn")
+async def cb_toggle_source_btn(call: CallbackQuery):
     if not await check_is_admin(call.from_user.id):
         await call.answer("Ruxsat yo'q!", show_alert=True)
         return
 
-    curr = await database.get_setting("channel_buttons", "1")
+    curr = await database.get_setting("channel_source_btn", "0")
     new_val = "0" if curr == "1" else "1"
-    await database.set_setting("channel_buttons", new_val)
+    await database.set_setting("channel_source_btn", new_val)
+    status_label = "yoqildi (🟢 Faol)" if new_val == "1" else "o'chirildi (ℹ️ Matn ichida qoldi)"
+    await call.answer(f"Manba tugmasi {status_label}!", show_alert=False)
+
+    text, kb = await get_rendered_admin_panel()
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        pass
+
+@router.callback_query(F.data == "toggle_ai_btn")
+async def cb_toggle_ai_btn(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    curr = await database.get_setting("channel_ai_btn", "0")
+    new_val = "0" if curr == "1" else "1"
+    await database.set_setting("channel_ai_btn", new_val)
     status_label = "yoqildi (🟢 Faol)" if new_val == "1" else "o'chirildi (🔴 O'chirilgan)"
-    await call.answer(f"Kanal postlari tugmalari {status_label}!", show_alert=False)
+    await call.answer(f"AI Maslahatchi tugmasi {status_label}!", show_alert=False)
 
     text, kb = await get_rendered_admin_panel()
     try:
@@ -1036,7 +1078,8 @@ async def cb_q_publish(call: CallbackQuery, bot: Bot):
     try:
         from scheduler import send_to_channel
         channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"))
-        await send_to_channel(bot, post["image_url"], post["uz_caption"], reply_markup=channel_kb)
+        cap_with_link = attach_source_link(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""))
+        await send_to_channel(bot, post["image_url"], cap_with_link, reply_markup=channel_kb)
         await call.answer("Post kanalga muvaffaqiyatli chiqarildi! 🚀", show_alert=False)
     except Exception as e:
         await call.answer(f"Xatolik: {e}", show_alert=True)
@@ -1091,7 +1134,8 @@ async def cb_queue_pub_first(call: CallbackQuery, bot: Bot):
     try:
         from scheduler import send_to_channel
         channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"))
-        await send_to_channel(bot, post["image_url"], post["uz_caption"], reply_markup=channel_kb)
+        cap_with_link = attach_source_link(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""))
+        await send_to_channel(bot, post["image_url"], cap_with_link, reply_markup=channel_kb)
         await call.answer(f"«{post['title'][:30]}...» kanalga chiqarildi! 🚀", show_alert=False)
     except Exception as e:
         await call.answer(f"Xatolik: {e}", show_alert=True)
@@ -1247,8 +1291,9 @@ async def cb_publish_post(call: CallbackQuery, bot: Bot):
         return
 
     now_str = datetime.now(timezone.utc).isoformat()
-    photo_caption = safe_telegram_caption(post["uz_caption"], config.CHANNEL_FOOTER, max_len=1024)
-    text_message = safe_telegram_caption(post["uz_caption"], config.CHANNEL_FOOTER, max_len=4096)
+    final_caption = attach_source_link(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""))
+    photo_caption = safe_telegram_caption(final_caption, config.CHANNEL_FOOTER, max_len=1024)
+    text_message = safe_telegram_caption(final_caption, config.CHANNEL_FOOTER, max_len=4096)
 
     try:
         channel_kb = await get_channel_post_keyboard(post_id=post_id, original_url=post.get("url"))

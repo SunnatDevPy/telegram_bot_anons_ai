@@ -8,7 +8,10 @@ import config
 import database
 import ai_formatter
 from rss_parser import scan_all_feeds
-from ai_formatter import format_news, safe_telegram_caption, generate_daily_digest
+from ai_formatter import (
+    format_news, safe_telegram_caption, generate_daily_digest,
+    attach_source_link
+)
 from bot_handlers import get_moderation_keyboard, get_channel_post_keyboard
 from media_helper import send_media_robust
 from diagnostics import send_admin_alert
@@ -126,7 +129,8 @@ async def check_due_scheduled_posts(bot: Bot):
     await database.set_post_status(post["id"], "published", published_at=now_str)
     try:
         channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"))
-        await send_to_channel(bot, post["image_url"], post["uz_caption"], reply_markup=channel_kb)
+        cap_with_link = attach_source_link(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""))
+        await send_to_channel(bot, post["image_url"], cap_with_link, reply_markup=channel_kb)
         print(f"[Avto-Reja] Post #{post['id']} kanalga muvaffaqiyatli chiqarildi.")
     except Exception as e:
         print(f"[Avto-Reja Xatolik] Post #{post['id']}: {e}")
