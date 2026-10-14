@@ -158,6 +158,8 @@ async def process_news_cycle(bot: Bot) -> int:
 
     # 2. Yangi RSS xabarlarini skanerlash
     new_items = await scan_all_feeds(limit_per_feed=2)
+    # Bitta siklda eng sara va dolzarb 3 ta yangilik olinadi (API limit va navbat tiqilib qolmasligi uchun)
+    new_items = new_items[:3]
     processed_count = 0
     in_night = is_night_mode_active()
 
@@ -302,19 +304,26 @@ async def run_scheduler_worker(bot: Bot):
         except Exception as e:
             print(f"[Scheduler Sikl Xatolik]: {e}")
 
-        # Kuniga bir marta eski arxivni tozalash (disk va baza to'lib ketmasligi uchun)
-        now_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if last_cleanup_date != now_date:
-            last_cleanup_date = now_date
-            await database.cleanup_old_posts(days=45)
+        try:
+            # Kuniga bir marta eski arxivni tozalash (disk va baza to'lib ketmasligi uchun)
+            now_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if last_cleanup_date != now_date:
+                last_cleanup_date = now_date
+                await database.cleanup_old_posts(days=45)
 
-        raw_interval = await database.get_setting("interval_minutes", "25")
-        interval_minutes = int(raw_interval) if raw_interval and raw_interval.isdigit() else 25
+            raw_interval = await database.get_setting("interval_minutes", "25")
+            interval_minutes = int(raw_interval) if raw_interval and raw_interval.isdigit() else 25
 
-        # 30 soniyalik qadamlar bilan uxlash va rejalarni tekshirish
-        wait_seconds = interval_minutes * 60
-        steps = max(1, wait_seconds // 30)
-        for _ in range(steps):
+            # 30 soniyalik qadamlar bilan uxlash va rejalarni tekshirish
+            wait_seconds = interval_minutes * 60
+            steps = max(1, wait_seconds // 30)
+            for _ in range(steps):
+                await asyncio.sleep(30)
+                try:
+                    await check_due_scheduled_posts(bot)
+                    await check_daily_digest(bot)
+                except Exception as sub_e:
+                    print(f"[Scheduler Oraliq Tekshiruv Xatolik]: {sub_e}")
+        except Exception as outer_e:
+            print(f"[Scheduler Tashqi Sikl Xatolik]: {outer_e}")
             await asyncio.sleep(30)
-            await check_due_scheduled_posts(bot)
-            await check_daily_digest(bot)

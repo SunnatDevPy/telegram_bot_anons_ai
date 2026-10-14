@@ -5,6 +5,7 @@ import asyncio
 from typing import Optional
 import httpx
 from google import genai
+from google.genai import types
 import config
 
 def get_all_clients() -> list:
@@ -13,7 +14,10 @@ def get_all_clients() -> list:
     clients = []
     for k in keys:
         try:
-            clients.append(genai.Client(api_key=k))
+            clients.append(genai.Client(
+                api_key=k,
+                http_options=types.HttpOptions(timeout=15000)
+            ))
         except Exception as e:
             print(f"[Gemini Client Init Xatolik]: {e}")
     return clients
@@ -28,7 +32,6 @@ async def execute_gemini_prompt(prompt: str) -> Optional[str]:
         "gemini-3-flash-preview",
         "gemini-3.1-flash-lite-preview",
         "gemini-flash-latest",
-        "gemini-flash-lite-latest",
         "gemini-3.8-flash"
     ]
     clients = get_all_clients()
@@ -39,15 +42,18 @@ async def execute_gemini_prompt(prompt: str) -> Optional[str]:
     for client in clients:
         for model_name in candidate_models:
             try:
-                response = await asyncio.to_thread(
-                    client.models.generate_content,
-                    model=model_name,
-                    contents=prompt
+                response = await asyncio.wait_for(
+                    asyncio.to_thread(
+                        client.models.generate_content,
+                        model=model_name,
+                        contents=prompt
+                    ),
+                    timeout=20.0
                 )
                 if response and response.text:
                     return response.text
-            except Exception as e:
-                # 429 (rate limit / quota) yoki 503 bo'lsa, keyingi model yoki keyingi kalitga o'tish
+            except (asyncio.TimeoutError, Exception):
+                # 429 (rate limit / quota), 503 yoki timeout bo'lsa, keyingi model yoki keyingi kalitga o'tish
                 continue
     return None
 

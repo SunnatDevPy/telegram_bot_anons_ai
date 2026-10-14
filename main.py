@@ -33,11 +33,20 @@ async def main():
     logger.info(f"Kanal: {config.CHANNEL_ID}")
 
     # Fon rejimida yangiliklar monitoringini ishga tushirish
+    def on_scheduler_done(t: asyncio.Task):
+        try:
+            t.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as err:
+            logger.critical(f"Scheduler vazifasi kutilmaganda to'xtadi: {err}", exc_info=True)
+
     scheduler_task = asyncio.create_task(run_scheduler_worker(bot))
+    scheduler_task.add_done_callback(on_scheduler_done)
 
     try:
-        # Pollingni boshlash
-        await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
+        # Pollingni boshlash (VPS tarmog'i uzilib qolmasligi uchun polling_timeout=30)
+        await dp.start_polling(bot, allowed_updates=["message", "callback_query"], polling_timeout=30)
     finally:
         scheduler_task.cancel()
         await bot.session.close()
