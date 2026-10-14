@@ -77,11 +77,13 @@ flowchart LR
 ---
 
 ### 6-Bosqich: 📡 RSS Manbalarini Dinamik Boshqarish (Feed Management)
-> **Maqsad:** Vaqtincha ishlamayotgan yoki 403 xatolik berayotgan manbalarni kodga kirmasdan boshqarish.
+> **Holati:** ✅ Bajarildi va Serverda Faol
 
-- [ ] Admin panelda **`📡 Manbalar ro'yxati`** bo'limi.
-- [ ] Har bir manba holati (Faol / Nofaol) va oxirgi muvaffaqiyatli olingan xabarlar soni.
-- [ ] Istalgan manbani (masalan, Cloudflare to'siq qo'ygan manbalarni) 1 ta tugma bilan o'chirib/yoqib qo'yish.
+- [x] **Admin panelda `📡 RSS Manbalar` bo'limi va `/feeds` buyrug'i:** Barcha 11 ta manbani ko'rish, paginatsiya (sahifalash) va faol/nofaol statistikasi.
+- [x] **Har bir manba holati va statistikasi:** Sayt nomi, kategoriyasi, bazadagi jamlangan postlar soni va joriy holati (🟢 Faol / 🔴 O'chirilgan).
+- [x] **Dinamik yoqish/o'chirish (Toggle):** Bitta tugma orqali manbani darhol faolsizlantirish yoki qayta yoqish. O'chirilgan manbalarga so'rov yuborilmaydi.
+- [x] **Jonli Ping Diagnostikasi (`⚡️ Barcha manbalarni tekshirish`):** Barcha 11 ta manbaga asinxron HTTP so'rov yuborib, ularning real vaqtdagi holatini (200 OK, 403, timeout) va javob tezligini (ms) tekshirish.
+- [x] **Barchasini yoqish:** Bitta tugma orqali barcha manbalarni qayta faollashtirish.
 
 ---
 

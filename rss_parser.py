@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 import feedparser
 import httpx
 import config
-from database import is_duplicate_news
+from database import is_duplicate_news, is_feed_enabled
 
 HEADERS = {
     "User-Agent": (
@@ -289,12 +289,30 @@ async def fetch_feed_entries(source: Dict[str, str], client: httpx.AsyncClient, 
 
     return results
 
+async def get_active_rss_sources() -> List[Dict[str, Any]]:
+    """Bazadagi sozlamalar bo'yicha faqat yoqilgan (enabled) RSS manbalarini olish"""
+    active = []
+    for src in config.RSS_SOURCES:
+        slug = src.get("slug")
+        if slug:
+            enabled = await is_feed_enabled(slug)
+            if enabled:
+                active.append(src)
+        else:
+            active.append(src)
+    return active
+
 async def scan_all_feeds(limit_per_feed: int = 3) -> List[Dict[str, Any]]:
-    """Barcha tasdiqlangan RSS manbalarini asinxron tekshirish va AI/Startaplar bo'yicha saralash"""
+    """Barcha faol (yoqilgan) RSS manbalarini asinxron tekshirish va AI/Startaplar bo'yicha saralash"""
+    active_sources = await get_active_rss_sources()
+    if not active_sources:
+        print("[RSS] Barcha manbalar o'chirilgan, yangi xabarlar qidirilmadi.")
+        return []
+
     async with httpx.AsyncClient(headers=HEADERS, timeout=15.0) as client:
         tasks = [
             fetch_feed_entries(src, client, limit=limit_per_feed)
-            for src in config.RSS_SOURCES
+            for src in active_sources
         ]
         feeds_results = await asyncio.gather(*tasks)
 
@@ -305,3 +323,46 @@ async def scan_all_feeds(limit_per_feed: int = 3) -> List[Dict[str, Any]]:
 
     all_new_news.sort(key=lambda x: x.get("priority", 0), reverse=True)
     return all_new_news
+
+async def ping_rss_sources() -> List[Dict[str, Any]]:
+    """Barcha 11 ta manbani asinxron tekshirib, status-kod va javob vaqtini (ms) qaytarish"""
+    async def _ping_one(src: Dict[str, Any], client: httpx.AsyncClient) -> Dict[str, Any]:
+        slug = src.get("slug", "")
+        name = src.get("name", "")
+        url = src.get("url", "")
+        is_active = await is_feed_enabled(slug) if slug else True
+        start_t = asyncio.get_event_loop().time()
+        status_code = None
+        status_text = "Noma'lum"
+        try:
+            resp = await client.get(url, timeout=10.0, follow_redirects=True)
+            elapsed_ms = int((asyncio.get_event_loop().time() - start_t) * 1000)
+            status_code = resp.status_code
+            if resp.status_code == 200:
+                status_text = "200 OK"
+            else:
+                status_text = f"HTTP {resp.status_code}"
+        except httpx.TimeoutException:
+            elapsed_ms = int((asyncio.get_event_loop().time() - start_t) * 1000)
+            status_text = "Timeout (10s)"
+        except Exception as e:
+            elapsed_ms = int((asyncio.get_event_loop().time() - start_t) * 1000)
+            status_text = f"Xato: {type(e).__name__}"
+
+        return {
+            "slug": slug,
+            "name": name,
+            "url": url,
+            "category": src.get("category", "IT"),
+            "is_active": is_active,
+            "status_code": status_code,
+            "status_text": status_text,
+            "elapsed_ms": elapsed_ms,
+            "ok": (status_code == 200)
+        }
+
+    async with httpx.AsyncClient(headers=HEADERS, timeout=12.0) as client:
+        tasks = [_ping_one(src, client) for src in config.RSS_SOURCES]
+        results = await asyncio.gather(*tasks)
+    return results
+

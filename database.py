@@ -92,6 +92,32 @@ async def set_setting(key: str, value: Any):
         )
         await db.commit()
 
+async def is_feed_enabled(slug: str) -> bool:
+    """RSS manbasi faolligini tekshirish (sukut bo'yicha True)"""
+    val = await get_setting(f"feed_enabled_{slug}", "1")
+    return val == "1"
+
+async def set_feed_enabled(slug: str, enabled: bool):
+    """RSS manbasi faolligini o'zgartirish (1 yoki 0)"""
+    await set_setting(f"feed_enabled_{slug}", "1" if enabled else "0")
+
+async def enable_all_feeds(slugs: List[str]):
+    """Barcha ko'rsatilgan RSS manbalarini faollashtirish"""
+    async with get_db() as db:
+        for s in slugs:
+            await db.execute(
+                "INSERT INTO settings (key, value) VALUES (?, '1') ON CONFLICT(key) DO UPDATE SET value = '1'",
+                (f"feed_enabled_{s}",)
+            )
+        await db.commit()
+
+async def get_posts_count_by_source() -> Dict[str, int]:
+    """Har bir manbadan olingan postlar sonini hisoblash"""
+    async with get_db() as db:
+        async with db.execute("SELECT source_name, COUNT(*) FROM posts GROUP BY source_name") as cursor:
+            rows = await cursor.fetchall()
+            return {r[0]: r[1] for r in rows if r[0]}
+
 STOP_WORDS = {
     "a", "an", "the", "and", "or", "in", "on", "at", "to", "for", "of", "with",
     "by", "from", "up", "about", "into", "over", "after", "is", "are", "was",
