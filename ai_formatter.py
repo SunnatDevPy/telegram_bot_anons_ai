@@ -529,22 +529,20 @@ async def fallback_formatter(title: str, summary: str, source_name: str, origina
 
     uz_title = html.escape(clean_ugly_symbols(uz_title_raw[:150]))
 
-    sentences = re.split(r'(?<=[.!?])\s+', uz_summary_raw)
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', uz_summary_raw) if s.strip()]
     if len(sentences) >= 2:
-        essence_raw = " ".join(sentences[:2])
-        more_details_raw = " ".join(sentences[2:]).strip()
+        essence_raw = sentences[0]
+        details_list = [f"• {s}" for s in sentences[1:4]]
+        more_details_raw = "\n\n".join(details_list)
+    elif len(sentences) == 1:
+        essence_raw = sentences[0]
+        more_details_raw = f"• Yangilik tafsilotlari: {uz_title_raw} bo'yicha birlamchi ma'lumotlar taqdim etildi."
     else:
-        essence_raw = uz_summary_raw
-        more_details_raw = ""
-
-    if not more_details_raw or len(more_details_raw) < 15:
-        more_details_raw = (
-            f"Ushbu yangilik IT va sun'iy intellekt sohasidagi yangi bosqichni ifodalaydi.\n\n"
-            f"Qo'shimcha texnik ma'lumotlar bilan quyidagi havola orqali tanishishingiz mumkin."
-        )
+        essence_raw = uz_title_raw
+        more_details_raw = f"• {source_name} orqali e'lon qilingan eng so'nggi xabar."
 
     essence = html.escape(clean_ugly_symbols(essence_raw[:260]))
-    more_details = html.escape(clean_ugly_symbols(more_details_raw[:350]))
+    more_details = html.escape(clean_ugly_symbols(more_details_raw[:450]))
     safe_source = html.escape(source_name)
 
     source_link = f"<a href='{original_url}'>{safe_source}</a>" if original_url else safe_source
@@ -552,7 +550,7 @@ async def fallback_formatter(title: str, summary: str, source_name: str, origina
     post = (
         f"⚡️ <b>{uz_title}</b>\n\n"
         f"📌 {essence}\n\n"
-        f"<blockquote expandable>📝 <b>Batafsil ma'lumot:</b>\n"
+        f"<blockquote expandable>📊 <b>Asosiy tafsilotlar:</b>\n\n"
         f"{more_details}</blockquote>\n\n"
         f"🏷 #AI #IT #Texnologiya #Yangiliklar\n\n"
         f"📡 <b>Manba:</b> {source_link}"
@@ -565,7 +563,7 @@ async def format_news(title: str, summary: str, source_name: str, category: str 
     client = get_gemini_client()
 
     prompt = f"""Sen — "{config.CHANNEL_USERNAME}" Telegram kanali uchun yetakchi IT va AI tahlilchisisan.
-Quyidagi xabarni o'zbek tilida juda aniq, jozibador qilib qayta yoz.
+Quyidagi xabarni o'zbek tilida juda aniq, jozibador, CHUQUR VA MAZMUNGA BOY qilib qayta yoz.
 
 Sarlavha: {title}
 Bo'lim: {category}
@@ -574,17 +572,19 @@ Matn: {summary}
 
 QAT'IY FORMAT TALABLARI (Har bir bo'lim orasida ALBATTA 2 ta bo'sh qator joy tashla!):
 
-⚡️ <b>(1 ta kuchli qalin sarlavha)</b>
+⚡️ <b>(1 ta kuchli, e'tiborni tortuvchi sarlavha)</b>
 
-📌 (1-2 ta aniq, tushunarli jumla bilan asosiy voqea. DIQQAT: "Mohiyati:" so'zini aslo yozma! To'g'ridan-to'g'ri 📌 emojisi ortidan matn boshlansin!).
+📌 (Asosiy voqea mohiyati: 1-2 ta aniq, teran jumla bilan nima bo'lganini tushuntir. DIQQAT: "Mohiyati:" so'zini aslo yozma! To'g'ridan-to'g'ri 📌 emojisi ortidan matn boshlansin!).
 
 <blockquote expandable>📊 <b>Asosiy tafsilotlar:</b>
-• (1-punkt: muhim raqamlar, benchmarklar yoki yangilik)
+• (1-punkt: Texnologik mohiyat, parametrlar, yangi funksiyalar yoki modellar imkoniyati haqida aniq faktlar)
 
-• (2-punkt: kimga qaratilganligi yoki narx/xususiyat)
+• (2-punkt: Benchmark natijalari, tezlik, aniqlik, xotira yoki moliyalashtirish/narx ko'rsatkichlari)
+
+• (3-punkt: Mazkur yangilik amaliyotda kimlar uchun va qanday muammolarni hal qilishda ishlatilishi)
 
 💡 <b>Xulosa:</b>
-(1 ta jumla bilan soha va foydalanuvchilarga ta'siri).</blockquote>
+(1 ta teran tahliliy jumla bilan mazkur yangilikning soha kelajagiga ta'siri).</blockquote>
 
 🏷 #AI #Texnologiya #{source_name.replace(' ', '')}
 
@@ -594,11 +594,11 @@ QOIDALAR:
 1. "Mohiyati:" so'zi aslo ishlatilmasin, 📌 dan keyin to'g'ridan-to'g'ri matn yozilsin.
 2. 📡 <b>Manba:</b> qismi sitata (<blockquote) ichida emas, sitatadan TASHQARIDA va hashtagdan keyin, eng pastda tursin!
 3. Bo'limlar bir-biriga yopishib qolmasin, oralarida aniq bo'sh qatorlar bo'lsin.
-4. HECH QACHON do'kon chegirmalari (deals), aksiyalar, narx arzonlashuvi (Save $..., % off, chegirma) haqida yozma! Agar qurilma haqida bo'lsa, chegirmaga emas, balki QURILMANING O'ZI VA TEXNIK KUCHI, CHIP VA PARAMETRLARIGA e'tibor qarat!
-5. Har doim yangi devayslar (flagman smartfonlar, noutbuklar, konsollar, aqlli qurilmalar), yangi chiplar (Nvidia GPU, AMD/Intel CPU, Apple Silicon, Qualcomm, NPU), sun'iy intellekt modellari, benchmarklar hamda istiqbolli IT va AI startaplarni (investitsiyalar, innovatsion loyihalar) yorit!
+4. "Asosiy tafsilotlar" bo'limida 2-3 ta sermazmun punkt bo'lsin, umumiy yoki quruq gaplar bo'lmasin. Haqiqiy faktlar, raqamlar va texnik xususiyatlarni kirit!
+5. HECH QACHON do'kon chegirmalari (deals), aksiyalar, narx arzonlashuvi (Save $..., % off, chegirma) haqida yozma! Texnologiyaning o'ziga e'tibor qarat!
 6. HECH QACHON [...] yoki ... yoki chala gap yozma!
 7. HECH QACHON Markdown yulduzchalaridan (**matn**) foydalanma! Qalin matn uchun faqat <b>matn</b> HTML teglaridan foydalan!
-8. Telegram caption limiti 1024 belgi! Jami matn uzunligi 700-850 belgi bo'lsin.
+8. Telegram caption limiti 1024 belgi! Jami ko'rinadigan matn uzunligi 750-880 belgi oralig'ida bo'lsin.
 """
 
     global LAST_FORMATTER_USED

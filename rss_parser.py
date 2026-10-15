@@ -252,8 +252,17 @@ async def fetch_feed_entries(source: Dict[str, str], client: httpx.AsyncClient, 
                 continue
 
             clean_title = clean_html(title)
-            raw_summary = getattr(entry, "summary", "") or ""
+            raw_summary = ""
+            if hasattr(entry, "content") and entry.content:
+                for c in entry.content:
+                    val = getattr(c, "value", "")
+                    if val and len(val) > len(raw_summary):
+                        raw_summary = val
+            if not raw_summary:
+                raw_summary = getattr(entry, "summary", "") or ""
             summary = clean_html(raw_summary)
+            if len(summary) > 1200:
+                summary = summary[:1200]
 
             # Do'kon chegirmalari, aksiyalar va savdo reklamalarini chetlab o'tish
             if is_commercial_deal(clean_title, link, summary):
