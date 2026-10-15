@@ -322,7 +322,7 @@ async def get_channel_post_keyboard(post_id: Optional[int] = None, original_url:
     buttons = []
     row1 = []
     if source_btn_enabled and original_url and str(original_url).startswith("http"):
-        row1.append(InlineKeyboardButton(text="🔗 Manba ↗", url=str(original_url)))
+        row1.append(InlineKeyboardButton(text="🟢 Manba ↗", url=str(original_url), style="success"))
 
     if ai_btn_enabled and post_id:
         bot_user = getattr(config, "BOT_USERNAME", "").lstrip("@")
@@ -721,7 +721,7 @@ async def cb_user_post(call: CallbackQuery):
 
     nav_row = [InlineKeyboardButton(text="⬅️ Top 10 ro'yxatiga qaytish", callback_data="user_refresh_top")]
     if post.get("url"):
-        nav_row.insert(0, InlineKeyboardButton(text="🔗 Manba ↗", url=post["url"]))
+        nav_row.insert(0, InlineKeyboardButton(text="🟢 Manba ↗", url=post["url"], style="success"))
 
     back_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤖 Ushbu maqola bo'yicha AI bilan muhokama", callback_data=f"ai_discuss_again:{post_id}")],
