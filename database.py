@@ -63,6 +63,10 @@ async def init_db():
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('channel_buttons', ?)",
             ("1" if getattr(config, "ENABLE_CHANNEL_BUTTONS", True) else "0",)
         )
+        if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", True):
+            await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('channel_source_btn', '1')")
+        if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", True):
+            await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('channel_ai_btn', '1')")
         await db.commit()
 
     await load_emojis_to_config()
@@ -478,6 +482,16 @@ async def get_today_published_posts(date_prefix: str, limit: int = 5) -> List[Di
             WHERE status = 'published' AND published_at LIKE ?
             ORDER BY id DESC LIMIT ?
         """, (pattern, limit)) as cursor:
+            rows = await cursor.fetchall()
+            if len(rows) >= 2:
+                return [dict(r) for r in rows]
+
+        # Agar bugungi sana bilan kamida 2 ta post topilmasa, kanalga chiqarilgan eng so'nggi postlarni olamiz
+        async with db.execute("""
+            SELECT * FROM posts 
+            WHERE status = 'published'
+            ORDER BY id DESC LIMIT ?
+        """, (limit,)) as cursor:
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 

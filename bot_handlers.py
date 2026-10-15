@@ -7,7 +7,7 @@ from aiogram import Router, F, Bot
 from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton
+    ReplyKeyboardMarkup, KeyboardButton, FSInputFile
 )
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
@@ -16,7 +16,7 @@ import config
 import database
 from ai_formatter import (
     regenerate_news, safe_telegram_caption, answer_ai_assistant_question,
-    attach_source_link
+    attach_source_link, generate_daily_digest
 )
 from media_helper import send_media_robust, send_user_preview_media
 from diagnostics import get_system_health, format_health_html
@@ -186,10 +186,11 @@ def get_admin_keyboard(
         ],
         [
             InlineKeyboardButton(text="📊 Holat (/status)", callback_data="view_bot_status"),
-            InlineKeyboardButton(text="💾 Baza Nusxasi (/backup)", callback_data="admin_download_backup")
+            InlineKeyboardButton(text="💾 Zaxira (/backup)", callback_data="admin_download_backup")
         ],
         [
-            InlineKeyboardButton(text="✨ Premium Emojilarni sozlash", callback_data="admin_emojis_menu")
+            InlineKeyboardButton(text="📰 Kechki Dayjest (/digest)", callback_data="admin_preview_digest"),
+            InlineKeyboardButton(text="✨ Premium Emojilar", callback_data="admin_emojis_menu")
         ],
         [
             InlineKeyboardButton(text="🟢 📢 Reklama (Broadcast) yuborish", callback_data="start_broadcast")
@@ -310,8 +311,8 @@ async def render_queue_page(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
 
 async def get_channel_post_keyboard(post_id: Optional[int] = None, original_url: Optional[str] = None) -> Optional[InlineKeyboardMarkup]:
     """Kanalga chiquvchi post ostiga ixcham inline tugmalar bloki (Manba va AI maslahat alohida boshqariladi)"""
-    default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", False) else "0"
-    default_ai = "1" if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", False) else "0"
+    default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", True) else "0"
+    default_ai = "1" if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", True) else "0"
     source_btn_enabled = (await database.get_setting("channel_source_btn", default_src) == "1")
     ai_btn_enabled = (await database.get_setting("channel_ai_btn", default_ai) == "1")
 
@@ -341,13 +342,34 @@ async def get_channel_post_keyboard(post_id: Optional[int] = None, original_url:
 
     return InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
 
+async def get_dayjest_keyboard() -> Optional[InlineKeyboardMarkup]:
+    """Kechki dayjest posti ostiga interaktiv tugmalar bloki"""
+    bot_user = getattr(config, "BOT_USERNAME", "").lstrip("@")
+    buttons = []
+    row = []
+    if bot_user:
+        row.append(InlineKeyboardButton(
+            text="🤖 AI bilan muhokama",
+            url=f"https://t.me/{bot_user}?start=digest"
+        ))
+
+    disc_link = getattr(config, "DISCUSSION_CHAT_LINK", "").strip()
+    if disc_link and disc_link.startswith("http"):
+        row.append(InlineKeyboardButton(text="💬 Fikr bildirish / Guruh", url=disc_link))
+    elif getattr(config, "CHANNEL_LINK", ""):
+        row.append(InlineKeyboardButton(text=f"📢 {config.CHANNEL_USERNAME}", url=config.CHANNEL_LINK))
+
+    if row:
+        buttons.append(row)
+    return InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None
+
 async def get_rendered_admin_panel() -> tuple[str, InlineKeyboardMarkup]:
     """Admin panelining yangilangan matni va tugmalarini tayyorlash"""
     text = await format_panel_text()
     mode = await database.get_setting("mode", "moderation")
     interval = int(await database.get_setting("interval_minutes", "25"))
-    default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", False) else "0"
-    default_ai = "1" if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", False) else "0"
+    default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", True) else "0"
+    default_ai = "1" if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", True) else "0"
     source_btn_enabled = (await database.get_setting("channel_source_btn", default_src) == "1")
     ai_btn_enabled = (await database.get_setting("channel_ai_btn", default_ai) == "1")
     queue_count = await database.get_scheduled_count()
@@ -388,8 +410,8 @@ async def check_is_admin(user_id: int) -> bool:
 async def format_panel_text() -> str:
     mode = await database.get_setting("mode", "moderation")
     interval = await database.get_setting("interval_minutes", "25")
-    default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", False) else "0"
-    default_ai = "1" if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", False) else "0"
+    default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", True) else "0"
+    default_ai = "1" if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", True) else "0"
     source_btn_setting = await database.get_setting("channel_source_btn", default_src)
     ai_btn_setting = await database.get_setting("channel_ai_btn", default_ai)
     source_btn_display = "🟢 Faol (Tugmada)" if source_btn_setting == "1" else "ℹ️ Matn ichida (Tugmasiz)"
@@ -482,7 +504,7 @@ async def cmd_start(message: Message):
         last_name=message.from_user.last_name
     )
 
-    # 1. Kanal inline tugmasidan kelgan deep-link so'rovini tekshirish (/start discuss_123)
+    # 1. Kanal inline tugmasidan kelgan deep-link so'rovini tekshirish (/start discuss_123 yoki /start digest)
     deep_arg = ""
     if message.text and len(message.text.split(maxsplit=1)) > 1:
         deep_arg = message.text.split(maxsplit=1)[1].strip()
@@ -496,10 +518,16 @@ async def cmd_start(message: Message):
             target_post = None
 
         if target_post:
+            context_text = (
+                f"Sarlavha: {target_post.get('title', '')}\n"
+                f"Manba: {target_post.get('source_name', '')}\n"
+                f"O'zbekcha post:\n{target_post.get('uz_caption', '')}\n\n"
+                f"Asl maqola to'liq matni (manbadan):\n{target_post.get('original_summary', '')[:2500]}"
+            )
             user_ai_state[message.from_user.id] = {
                 "post_id": target_post["id"],
                 "title": target_post.get("title", ""),
-                "context": target_post.get("uz_caption", "") or target_post.get("original_summary", "")
+                "context": context_text
             }
             user_search_state.pop(message.from_user.id, None)
 
@@ -512,14 +540,42 @@ async def cmd_start(message: Message):
                 f"🤖 <b>NeuraTech AI — Maqola Muhokamasi</b>\n\n"
                 f"Siz kanalimizdagi quyidagi yangilik yuzasidan savol bermoqchisiz:\n"
                 f"📌 <b>«{target_post['title']}»</b>\n\n"
-                f"<i>Ushbu yangilik bo'yicha o'zingizni qiziqtirgan savolingizni yozing. Masalan:</i>\n"
+                f"💡 <i>Ushbu mavzu bo'yicha sun'iy intellektdan istalgan narsani so'rashingiz mumkin. Masalan:</i>\n"
                 f"• «Buning oddiy foydalanuvchiga qanday foydasi bor?»\n"
-                f"• «Ushbu texnologiya qachon ommalashadi yoki sotuvga chiqadi?»\n"
-                f"• «Bu yangilik nimasi bilan inqilobiy?»\n\n"
+                f"• «Ushbu texnologiya yoki gadjet qachon sotuvga chiqadi?»\n"
+                f"• «Uning avvalgi avlodidan asosiy farqlari nimada?»\n"
+                f"• «Texnik xususiyatlari qanday?»\n\n"
                 f"✍️ <i>Savolingizni quyida yozib qoldiring:</i>"
             )
             await message.answer(greeting, parse_mode="HTML", reply_markup=discuss_kb)
             return
+
+    if deep_arg.startswith("digest"):
+        today_str = datetime.now(config.TASHKENT_TZ).strftime("%Y-%m-%d")
+        today_posts = await database.get_today_published_posts(today_str, limit=5)
+        digest_summary = "\n".join([f"• {p['title']}: {p.get('original_summary', '')[:160]}" for p in today_posts])
+        user_ai_state[message.from_user.id] = {
+            "title": "NeuraTech Kechki Dayjest",
+            "context": f"Bugungi eng muhim xabarlar to'plami:\n{digest_summary}"
+        }
+        user_search_state.pop(message.from_user.id, None)
+
+        digest_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⚡️ Bugungi xabarlarni ko'rish", callback_data="user_refresh_top")],
+            [InlineKeyboardButton(text="❌ Muhokamani yakunlash", callback_data="user_cancel_ai")]
+        ])
+
+        greeting = (
+            f"🤖 <b>NeuraTech AI — Kechki Dayjest Muhokamasi</b>\n\n"
+            f"Kunning eng muhim IT va AI voqealari yuzasidan savollaringiz bormi?\n\n"
+            f"💡 <i>Istalgan mavzu yuzasidan so'rashingiz mumkin. Masalan:</i>\n"
+            f"• «Bugungi voqealar orasida eng muhimi qaysi va nega?»\n"
+            f"• «Ushbu yangiliklarning bozordagi raqobatga ta'siri qanday?»\n"
+            f"• «Qaysi texnologiya eng ko'p e'tiborga loyiq?»\n\n"
+            f"✍️ <i>Savolingizni pastda yozib qoldiring:</i>"
+        )
+        await message.answer(greeting, parse_mode="HTML", reply_markup=digest_kb)
+        return
 
     # Standart /start harakati
     is_admin = await check_is_admin(message.from_user.id)
@@ -579,6 +635,95 @@ async def cmd_backup(message: Message, bot: Bot):
         pass
     if not success:
         await message.answer("❌ Zaxira nusxasini tayyorlashda xatolik yuz berdi.")
+
+@router.message(Command("digest"))
+async def cmd_digest(message: Message, bot: Bot):
+    if not await check_is_admin(message.from_user.id):
+        await message.reply("Kechirasiz, ushbu buyruq faqat bot ma'muri uchun.")
+        return
+
+    wait_msg = await message.answer("⏳ <i>Kechki dayjest generatsiya qilinmoqda va tayyorlanmoqda...</i>", parse_mode="HTML")
+    today_str = datetime.now(config.TASHKENT_TZ).strftime("%Y-%m-%d")
+    today_posts = await database.get_today_published_posts(today_str, limit=5)
+    if len(today_posts) < 2:
+        await wait_msg.edit_text("⚠️ Dayjest uchun yetarli post topilmadi (kamida 2 ta chiqarilgan post kerak).")
+        return
+
+    digest_text = await generate_daily_digest(today_posts)
+    caption = safe_telegram_caption(digest_text, max_len=1024)
+
+    preview_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Kanalga hoziroq chiqarish", callback_data="publish_digest_now")],
+        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_digest_preview")]
+    ])
+
+    if config.LOGO_PATH.exists():
+        await message.answer_photo(
+            photo=FSInputFile(str(config.LOGO_PATH)),
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=preview_kb
+        )
+    else:
+        await message.answer(caption, parse_mode="HTML", reply_markup=preview_kb)
+
+    try:
+        await wait_msg.delete()
+    except Exception:
+        pass
+
+@router.callback_query(F.data == "admin_preview_digest")
+async def cb_admin_preview_digest(call: CallbackQuery, bot: Bot):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    await call.answer("📰 Kechki dayjest tayyorlanmoqda...", show_alert=False)
+    today_str = datetime.now(config.TASHKENT_TZ).strftime("%Y-%m-%d")
+    today_posts = await database.get_today_published_posts(today_str, limit=5)
+    if len(today_posts) < 2:
+        await call.message.answer("⚠️ Dayjest uchun yetarli post topilmadi (kamida 2 ta chiqarilgan post kerak).")
+        return
+
+    digest_text = await generate_daily_digest(today_posts)
+    caption = safe_telegram_caption(digest_text, max_len=1024)
+
+    preview_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🚀 Kanalga hoziroq chiqarish", callback_data="publish_digest_now")],
+        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="cancel_digest_preview")]
+    ])
+
+    if config.LOGO_PATH.exists():
+        await call.message.answer_photo(
+            photo=FSInputFile(str(config.LOGO_PATH)),
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=preview_kb
+        )
+    else:
+        await call.message.answer(caption, parse_mode="HTML", reply_markup=preview_kb)
+
+@router.callback_query(F.data == "publish_digest_now")
+async def cb_publish_digest_now(call: CallbackQuery, bot: Bot):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    await call.answer("🚀 Kanalga yuborilmoqda...", show_alert=False)
+    from scheduler import check_daily_digest
+    sent = await check_daily_digest(bot, force=True)
+    if sent:
+        await call.message.answer("✅ <b>Kechki Dayjest kanalga muvaffaqiyatli chiqarildi!</b> 📊", parse_mode="HTML")
+    else:
+        await call.message.answer("❌ Kechki dayjestni chiqarishda xatolik yuz berdi.", parse_mode="HTML")
+
+@router.callback_query(F.data == "cancel_digest_preview")
+async def cb_cancel_digest_preview(call: CallbackQuery):
+    await call.answer("Bekor qilindi.")
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
 
 # ==================== FOYDALANUVCHILAR (MIJOZLAR) UCHUN BO'LIM ====================
 
@@ -926,7 +1071,8 @@ async def cb_toggle_source_btn(call: CallbackQuery):
         await call.answer("Ruxsat yo'q!", show_alert=True)
         return
 
-    curr = await database.get_setting("channel_source_btn", "0")
+    default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", True) else "0"
+    curr = await database.get_setting("channel_source_btn", default_src)
     new_val = "0" if curr == "1" else "1"
     await database.set_setting("channel_source_btn", new_val)
     status_label = "yoqildi (🟢 Faol)" if new_val == "1" else "o'chirildi (ℹ️ Matn ichida qoldi)"
@@ -944,7 +1090,8 @@ async def cb_toggle_ai_btn(call: CallbackQuery):
         await call.answer("Ruxsat yo'q!", show_alert=True)
         return
 
-    curr = await database.get_setting("channel_ai_btn", "0")
+    default_ai = "1" if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", True) else "0"
+    curr = await database.get_setting("channel_ai_btn", default_ai)
     new_val = "0" if curr == "1" else "1"
     await database.set_setting("channel_ai_btn", new_val)
     status_label = "yoqildi (🟢 Faol)" if new_val == "1" else "o'chirildi (🔴 O'chirilgan)"
@@ -2021,9 +2168,9 @@ async def handle_incoming_messages(message: Message, bot: Bot):
             )
             return
 
-    # 3. Agar foydalanuvchi AI Maslahatchi holatida bo'lsa (umumiy yoki maqola bo'yicha):
+    # 3. Agar foydalanuvchi AI Maslahatchi holatida bo'lsa (umumiy, dayjest yoki maqola bo'yicha):
     if message.from_user.id in user_ai_state:
-        state_data = user_ai_state.pop(message.from_user.id, None)
+        state_data = user_ai_state.get(message.from_user.id)
         query = (message.text or "").strip()
         if not query:
             await message.answer("Iltimos, savolingizni matn ko'rinishida yozing.")
@@ -2036,6 +2183,10 @@ async def handle_incoming_messages(message: Message, bot: Bot):
             article_context = state_data.get("context")
             article_title = state_data.get("title", "")
             post_id = state_data.get("post_id")
+            # Suhbat uzluksiz davom etishi uchun foydalanuvchi holatini saqlab qolamiz
+            user_ai_state[message.from_user.id] = state_data
+        else:
+            user_ai_state[message.from_user.id] = True
 
         header_prefix = f"🧠 <i>«{article_title[:45]}...» tahlil qilinmoqda...</i>" if article_title else "🧠 <i>NeuraTech AI javob tayyorlamoqda...</i>"
         wait_msg = await message.answer(header_prefix, parse_mode="HTML")
@@ -2048,11 +2199,13 @@ async def handle_incoming_messages(message: Message, bot: Bot):
         kb_rows = []
         if post_id:
             kb_rows.append([
-                InlineKeyboardButton(text="💬 Shu mavzuda yana savol berish", callback_data=f"ai_discuss_again:{post_id}"),
-                InlineKeyboardButton(text="📖 Maqolani o'qish", callback_data=f"user_post:{post_id}")
+                InlineKeyboardButton(text="📖 Maqolani o'qish", callback_data=f"user_post:{post_id}"),
+                InlineKeyboardButton(text="❌ Yakunlash", callback_data="user_cancel_ai")
             ])
         else:
-            kb_rows.append([InlineKeyboardButton(text="💬 Yana savol berish", callback_data="ai_ask_again")])
+            kb_rows.append([
+                InlineKeyboardButton(text="❌ Muhokamani yakunlash", callback_data="user_cancel_ai")
+            ])
 
         kb_rows.append([
             InlineKeyboardButton(text=f"📢 {config.CHANNEL_USERNAME}", url=config.CHANNEL_LINK),
@@ -2061,7 +2214,7 @@ async def handle_incoming_messages(message: Message, bot: Bot):
 
         reply_kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
         await message.answer(
-            f"🤖 <b>NeuraTech AI:</b>\n\n{answer}",
+            f"🤖 <b>NeuraTech AI:</b>\n\n{answer}\n\n<i>💬 Istalgan qo'shimcha savolingizni bemalol yozishingiz mumkin:</i>",
             parse_mode="HTML",
             reply_markup=reply_kb
         )

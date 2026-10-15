@@ -30,8 +30,8 @@ CHANNEL_LINK = os.getenv("CHANNEL_LINK", f"https://t.me/{CHANNEL_USERNAME.lstrip
 # Bot username va interaktiv kanal tugmalari sozlamalari
 BOT_USERNAME = os.getenv("BOT_USERNAME", "news_ai_bot").strip().lstrip("@")
 BOT_LINK = f"https://t.me/{BOT_USERNAME}"
-ENABLE_CHANNEL_SOURCE_BUTTON = os.getenv("ENABLE_CHANNEL_SOURCE_BUTTON", "False").lower() in ("true", "1", "yes")
-ENABLE_CHANNEL_AI_BUTTON = os.getenv("ENABLE_CHANNEL_AI_BUTTON", "False").lower() in ("true", "1", "yes")
+ENABLE_CHANNEL_SOURCE_BUTTON = os.getenv("ENABLE_CHANNEL_SOURCE_BUTTON", "True").lower() in ("true", "1", "yes")
+ENABLE_CHANNEL_AI_BUTTON = os.getenv("ENABLE_CHANNEL_AI_BUTTON", "True").lower() in ("true", "1", "yes")
 ENABLE_CHANNEL_BUTTONS = ENABLE_CHANNEL_SOURCE_BUTTON or ENABLE_CHANNEL_AI_BUTTON
 DISCUSSION_CHAT_LINK = os.getenv("DISCUSSION_CHAT_LINK", "").strip()
 

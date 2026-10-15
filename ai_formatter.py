@@ -644,47 +644,55 @@ Format:
         return apply_premium_emojis(cleaned)
     return current_caption
 
+UZ_MONTHS = [
+    "", "yanvar", "fevral", "mart", "aprel", "may", "iyun",
+    "iyul", "avgust", "sentabr", "oktabr", "noyabr", "dekabr"
+]
+
+def get_tashkent_today_str() -> str:
+    now_t = datetime.now(config.TASHKENT_TZ)
+    return f"{now_t.day}-{UZ_MONTHS[now_t.month]}, {now_t.year}"
+
 async def generate_daily_digest(posts: list) -> str:
-    """Kunlik eng sara 5 ta yangilik dayjestini tayyorlash"""
+    """Kunlik eng sara 5 ta yangilik dayjestini tayyorlash (soat 21:00 va admin sinovi uchun)"""
     if not posts:
         return ""
 
+    today_label = get_tashkent_today_str()
     articles_text = ""
     for idx, p in enumerate(posts[:5], 1):
-        articles_text += f"{idx}. {p['title']}\nManba: {p.get('source_name', '')}\nQisqacha: {p.get('original_summary', '')[:160]}\n\n"
+        articles_text += f"{idx}. {p['title']}\nManba: {p.get('source_name', '')}\nQisqacha: {p.get('original_summary', '')[:140]}\n\n"
 
     prompt = f"""Sen — "{config.CHANNEL_USERNAME}" Telegram kanali uchun yetakchi IT va AI tahlilchisisan.
-Bugun kanalda e'lon qilingan eng muhim yangiliklar asosida kechki "NeuraTech Dayjesti" postini o'zbek tilida tayyorla.
+Bugun kanalda e'lon qilingan eng muhim 5 ta xabar asosida kechki "NeuraTech Dayjesti" postini o'zbek tilida tayyorla.
 
 Bugungi maqolalar:
 {articles_text}
 
-QAT'IY FORMAT TALABI:
-⚡️ <b>NEURATECH DAYJEST | Kunning eng muhim 5 ta texno voqeasi</b>
-
-📌 <b>Qisqacha:</b>
-Bugun IT, sun'iy intellekt, chiplar va gadjetlar olamida sodir bo'lgan eng qaynoq voqealar jamlanmasi:
+QAT'IY FORMAT TALABI (Aynan shu tartibda bo'lsin):
+⚡️ <b>NEURATECH KECHKI DAYJEST</b>
+📅 <i>{today_label} | Kunning eng muhim IT va AI voqealari</i>
 
 <blockquote expandable>📊 <b>Kunning asosiy anonslari:</b>
-1. <b>(1-mavzu nomi)</b> — (1 jumla bilan mazmuni)
+1️⃣ <b>(Mavzu nomi)</b> — (1 ta ixcham, faktga boy jumla, 8-12 so'z).
 
-2. <b>(2-mavzu nomi)</b> — (1 jumla bilan mazmuni)
+2️⃣ <b>(Mavzu nomi)</b> — (1 ta ixcham, faktga boy jumla, 8-12 so'z).
 
-3. <b>(3-mavzu nomi)</b> — (1 jumla bilan mazmuni)
+3️⃣ <b>(Mavzu nomi)</b> — (1 ta ixcham, faktga boy jumla, 8-12 so'z).
 
-4. <b>(4-mavzu nomi)</b> — (1 jumla bilan mazmuni)
+4️⃣ <b>(Mavzu nomi)</b> — (1 ta ixcham, faktga boy jumla, 8-12 so'z).
 
-5. <b>(5-mavzu nomi)</b> — (1 jumla bilan mazmuni)
+5️⃣ <b>(Mavzu nomi)</b> — (1 ta ixcham, faktga boy jumla, 8-12 so'z).
 
 💡 <b>Xulosa:</b>
-(1 ta umumlashtiruvchi jumla).</blockquote>
+(1 ta lo'nda xulosa, 8-12 so'z).</blockquote>
 
-🏷 #NeuraTech #Dayjest #AI #Texnologiya #Yangiliklar
+🏷 #NeuraTech #Dayjest #AI #IT #Texnologiya
 
 QOIDALAR:
-1. Telegram caption limiti 1024 belgi!
-2. Har bir punkt orasida 2 ta bo'sh qator bo'lsin.
-3. [...] yoki chala jumlalar bo'lmasin.
+1. QAT'IY LIMIT: Har bir punkt 1 ta qisqa jumladan oshmasin (maksimal 70-90 belgi). Butun postning jami matni 600-750 belgi oralig'ida bo'lishi shart! (Telegram rasm posti chegarasi 1024 belgi).
+2. Har bir punkt orasida 1 ta bo'sh qator bo'lsin.
+3. Chala jumlalar, [...] yoki Markdown (* yoki **) umuman ishlatma. Faqat Telegram HTML teglari (<b>, <i>).
 """
     raw = await execute_gemini_prompt(prompt)
     if raw:
@@ -695,13 +703,18 @@ QOIDALAR:
 
     # Zaxira formatlash
     lines = [
-        "⚡️ <b>NEURATECH DAYJEST | Kunning eng muhim texno anonslari</b>\n\n",
-        "📌 <b>Bugun sodir bo'lgan asosiy voqealar:</b>\n\n",
-        "<blockquote expandable>📊 <b>Kunning sara xabarlari:</b>\n"
+        "⚡️ <b>NEURATECH KECHKI DAYJEST</b>\n",
+        f"📅 <i>{today_label} | Kunning eng muhim IT va AI voqealari</i>\n\n",
+        "<blockquote expandable>📊 <b>Kunning asosiy anonslari:</b>\n"
     ]
-    for idx, p in enumerate(posts[:5], 1):
-        lines.append(f"{idx}. <b>{html.escape(p['title'][:80])}</b> ({html.escape(p.get('source_name', ''))})\n\n")
-    lines.append("</blockquote>\n\n🏷 #NeuraTech #Dayjest #AI #IT")
+    num_badges = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    for idx, p in enumerate(posts[:5]):
+        badge = num_badges[idx] if idx < len(num_badges) else f"{idx+1}."
+        title = html.escape(p['title'][:65])
+        source = html.escape(p.get('source_name', 'IT'))
+        lines.append(f"{badge} <b>{title}</b> ({source})\n\n")
+    lines.append("💡 <b>Xulosa:</b> Bugungi texnologik yangiliklar AI va apparat vositalari jadal rivojlanayotganini ko'rsatmoqda.</blockquote>\n\n")
+    lines.append("🏷 #NeuraTech #Dayjest #AI #IT #Texnologiya")
     return apply_premium_emojis("".join(lines))
 
 async def answer_ai_assistant_question(question: str, article_context: Optional[str] = None) -> str:
@@ -710,17 +723,18 @@ async def answer_ai_assistant_question(question: str, article_context: Optional[
         prompt = f"""Sen — "{config.CHANNEL_USERNAME}" Telegram kanali va botining intellektual Sun'iy Intellekt maslahatchisisan (NeuraTech AI).
 Foydalanuvchi kanalda e'lon qilingan quyidagi yangilik/maqola yuzasidan savol bermoqda:
 
-MAQOLA MAZMUNI:
+MAQOLA VA MANBA MAZMUNI:
 {article_context}
 
 FOYDALANUVCHI SAVOLI:
 "{question}"
 
 QOIDALAR:
-1. O'zbek tilida juda samimiy, tushunarli, aniq va professional javob ber.
-2. Maqola mazmuniga bevosita tayangan holda savolga javob ber. Agar foydalanuvchi maqoladagi atama yoki yangilik haqida so'rasa, uni o'zbek tilida sodda qilib tushuntirib ber.
-3. Javob juda uzun bo'lmasin (maksimal 2-3 ta qisqa abzas, 500-800 belgi).
-4. Telegram HTML teglaridan (<b>, <i>, <code>) to'g'ri foydalan. Markdown (**yoki *) ishlatma!
+1. O'zbek tilida juda samimiy, aniq, faktlarga tayangan va professional texnik uslubda javob ber.
+2. Maqola va manba mazmuniga bevosita tayangan holda savolga to'liq javob ber. Texnik atamalarni o'zbek tilida sodda va tushunarli qilib yorit.
+3. Javob lo'nda va o'qishli bo'lsin (2-3 ta qisqa abzas, 500-800 belgi). Keraksiz kirish yoki quruq gaplar yozma.
+4. Muhim faktlar, raqamlar yoki xususiyatlarni <b>qalin</b> qilib ajrat.
+5. Telegram HTML teglaridan (<b>, <i>, <code>) to'g'ri foydalan. Markdown (** yoki *) aslo ishlatma!
 """
     else:
         prompt = f"""Sen — "{config.CHANNEL_USERNAME}" botining intellektual Sun'iy Intellekt maslahatchisisan (NeuraTech AI).
@@ -730,8 +744,8 @@ Foydalanuvchi quyidagi savolni yo'lladi:
 QOIDALAR:
 1. O'zbek tilida juda samimiy, aniq, lo'nda va professional tarzda javob ber.
 2. Savol IT, sun'iy intellekt, gadjetlar, noutbuklar, dasturlash yoki texnologiyaga oid bo'lsa, eng so'nggi ma'lumotlar bilan tavsiya ber.
-3. Javob juda uzun bo'lmasin (maksimal 2-3 ta qisqa abzas, 500-750 belgi).
-4. Telegram HTML teglaridan (<b>, <i>, <code>) to'g'ri foydalan. Markdown (**yoki *) ishlatma!
+3. Javob 2-3 ta qisqa abzasda (500-750 belgi) bo'lsin.
+4. Telegram HTML teglaridan (<b>, <i>, <code>) to'g'ri foydalan. Markdown (** yoki *) aslo ishlatma!
 """
     raw = await execute_gemini_prompt(prompt)
     if raw:

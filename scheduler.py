@@ -12,7 +12,7 @@ from ai_formatter import (
     format_news, safe_telegram_caption, generate_daily_digest,
     attach_source_link
 )
-from bot_handlers import get_moderation_keyboard, get_channel_post_keyboard
+from bot_handlers import get_moderation_keyboard, get_channel_post_keyboard, get_dayjest_keyboard
 from media_helper import send_media_robust
 from diagnostics import send_admin_alert
 from backup_service import check_daily_backup
@@ -135,26 +135,28 @@ async def check_due_scheduled_posts(bot: Bot):
     except Exception as e:
         print(f"[Avto-Reja Xatolik] Post #{post['id']}: {e}")
 
-async def check_daily_digest(bot: Bot):
+async def check_daily_digest(bot: Bot, force: bool = False) -> bool:
     """Har kuni soat 21:00 da o'sha kungi eng muhim 5 ta xabar dayjestini chiqarish"""
     now_t = datetime.now(config.TASHKENT_TZ)
-    if now_t.hour != config.DAILY_DIGEST_HOUR:
-        return
+    if not force and now_t.hour != config.DAILY_DIGEST_HOUR:
+        return False
 
     today_str = now_t.strftime("%Y-%m-%d")
     last_sent = await database.get_setting("last_daily_digest_date", "")
-    if last_sent == today_str:
-        return
+    if not force and last_sent == today_str:
+        return False
 
     today_posts = await database.get_today_published_posts(today_str, limit=5)
     if len(today_posts) < 2:
-        return
+        return False
 
     digest_text = await generate_daily_digest(today_posts)
     if not digest_text:
-        return
+        return False
 
     await database.set_setting("last_daily_digest_date", today_str)
+
+    digest_kb = await get_dayjest_keyboard()
 
     # Logo bilan chiqarish
     if config.LOGO_PATH.exists():
@@ -163,19 +165,22 @@ async def check_daily_digest(bot: Bot):
                 chat_id=config.CHANNEL_ID,
                 photo=FSInputFile(str(config.LOGO_PATH)),
                 caption=safe_telegram_caption(digest_text, max_len=1024),
-                parse_mode="HTML"
+                parse_mode="HTML",
+                reply_markup=digest_kb
             )
             print("[Kechki Dayjest] Kanalga logo bilan chiqarildi! 📊")
-            return
+            return True
         except Exception as e:
             print(f"[Dayjest Rasm Xatolik]: {e}")
 
     await bot.send_message(
         chat_id=config.CHANNEL_ID,
         text=safe_telegram_caption(digest_text, max_len=4096),
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=digest_kb
     )
     print("[Kechki Dayjest] Kanalga matn sifatida chiqarildi! 📊")
+    return True
 
 async def process_news_cycle(bot: Bot) -> int:
     """Yangiliklarni izlash, qayta ishlash va rejimga qarab yo'naltirish"""
