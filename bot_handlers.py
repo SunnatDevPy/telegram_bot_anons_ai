@@ -325,11 +325,12 @@ async def get_channel_post_keyboard(post_id: Optional[int] = None, original_url:
         row1.append(InlineKeyboardButton(text="🔗 Manba ↗", url=str(original_url)))
 
     if ai_btn_enabled and post_id:
-        bot_user = getattr(config, "BOT_USERNAME", "neuratech_news_bot").lstrip("@")
-        row1.append(InlineKeyboardButton(
-            text="🤖 AI bilan muhokama",
-            url=f"https://t.me/{bot_user}?start=discuss_{post_id}"
-        ))
+        bot_user = getattr(config, "BOT_USERNAME", "").lstrip("@")
+        if bot_user:
+            row1.append(InlineKeyboardButton(
+                text="🤖 AI bilan muhokama",
+                url=f"https://t.me/{bot_user}?start=discuss_{post_id}"
+            ))
 
     if row1:
         buttons.append(row1)

@@ -37,7 +37,7 @@ flowchart LR
 
 - [x] Post ostiga ixcham inline tugmalar bloki:
   - 🔗 **`Asl maqola (Manba) ↗`** — yangilikning rasmiy manziliga o'tish.
-  - 🤖 **`AI bilan muhokama qilish`** — botning "AI Maslahatchi" menyusiga yo'naltiruvchi deep-link (`t.me/neuratech_news_bot?start=discuss_POSTID`). Maqola bo'yicha maxsus kontekstli savol-javob rejimi.
+  - 🤖 **`AI bilan muhokama qilish`** — botning "AI Maslahatchi" menyusiga yo'naltiruvchi deep-link (`t.me/your_bot?start=discuss_POSTID`). Maqola bo'yicha maxsus kontekstli savol-javob rejimi.
   - 💬 **`Fikr bildirish`** — kanal muhokama guruhiga o'tish havolasi (agar guruh ulangan bo'lsa).
 - [x] Tugmalarni `.env` va **Admin panel** (`🔘 Kanal tugmalari`) orqali yoqish/o'chirish imkoniyati.
 

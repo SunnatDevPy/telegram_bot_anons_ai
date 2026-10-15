@@ -94,7 +94,7 @@ flowchart TD
     ModeCheck -- "Moderatsiya" --> AdminBot[Adminga qoralama: Hoziroq / +30m / Qayta yozish]
     ModeCheck -- "Auto Rejim" --> AntiBurst[10 daqiqalik oraliq bilan navbatga qo'yish]
     
-    AntiBurst --> Channel[📢 Rasmiy Telegram Kanal @neuratech_uz]
+    AntiBurst --> Channel[📢 Rasmiy Telegram Kanal]
     AdminBot -- "Admin tasdiqlasa" --> Channel
 ```
 
@@ -118,7 +118,7 @@ flowchart TD
 
 ### 1. Repozitoriyni klonlash:
 ```bash
-git clone https://github.com/SunnatDevPy/telegram_bot_anons_ai.git
+git clone https://github.com/your-username/telegram_bot_anons_ai.git
 cd telegram_bot_anons_ai
 ```
 
@@ -177,9 +177,9 @@ docker ps
 | :--- | :---: | :---: | :--- |
 | `BOT_TOKEN` | — | **Ha** | @BotFather bergan Telegram bot tokeni |
 | `CHANNEL_ID` | — | **Ha** | Yangiliklar joylanadigan kanal ID raqami (`-100...`) |
-| `CHANNEL_USERNAME` | — | **Ha** | Kanal username'i (masalan `@neuratech_uz`) |
+| `CHANNEL_USERNAME` | — | **Ha** | Kanal username'i (masalan `@your_channel`) |
 | `CHANNEL_LINK` | — | **Ha** | Kanalning to'liq havolasi |
-| `BOT_USERNAME` | `neuratech_news_bot` | Yo'q | Kanal postlari ostidagi tugmalar uchun bot username |
+| `BOT_USERNAME` | `your_bot` | Yo'q | Kanal postlari ostidagi tugmalar uchun bot username |
 | `GEMINI_API_KEY` | — | **Ha** | Asosiy Google AI Studio API kaliti |
 | `GEMINI_API_KEY_1`...`3` | — | Yo'q | Multi-Key hovuzi uchun qo'shimcha zaxira Gemini kalitlari |
 | `ADMIN_ID` | — | **Ha** | Boshqaruvchi adminning Telegram ID raqami |
@@ -219,9 +219,6 @@ docker ps
 
 ---
 
-## 👨‍💻 Muallif va Ruxsatnoma
+## 📄 Litsenziya
 
-Loyiha ochiq kodli bo‘lib, **MIT** litsenziyasi ostida tarqatiladi.  
-Tuzuvchi: **[SunnatDevPy](https://github.com/SunnatDevPy)**
-
-*Loyiha sizga ma'qul kelgan bo‘lsa, GitHub'da ⭐ yulduzcha qo‘yishni unutmang!*
+Loyiha ochiq kodli bo‘lib, **MIT** litsenziyasi ostida tarqatiladi.

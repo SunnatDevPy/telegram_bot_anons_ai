@@ -23,12 +23,12 @@ load_dotenv(BASE_DIR / ".env")
 TASHKENT_TZ = timezone(timedelta(hours=5))
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
-CHANNEL_ID = os.getenv("CHANNEL_ID", "-1002229527376").strip()
-CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "@grand_mobile_anons").strip()
-CHANNEL_LINK = os.getenv("CHANNEL_LINK", f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}").strip()
+CHANNEL_ID = os.getenv("CHANNEL_ID", "").strip()
+CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME", "").strip()
+CHANNEL_LINK = os.getenv("CHANNEL_LINK", f"https://t.me/{CHANNEL_USERNAME.lstrip('@')}" if CHANNEL_USERNAME else "").strip()
 
 # Bot username va interaktiv kanal tugmalari sozlamalari
-BOT_USERNAME = os.getenv("BOT_USERNAME", "neuratech_news_bot").strip().lstrip("@")
+BOT_USERNAME = os.getenv("BOT_USERNAME", "news_ai_bot").strip().lstrip("@")
 BOT_LINK = f"https://t.me/{BOT_USERNAME}"
 ENABLE_CHANNEL_SOURCE_BUTTON = os.getenv("ENABLE_CHANNEL_SOURCE_BUTTON", "False").lower() in ("true", "1", "yes")
 ENABLE_CHANNEL_AI_BUTTON = os.getenv("ENABLE_CHANNEL_AI_BUTTON", "False").lower() in ("true", "1", "yes")
