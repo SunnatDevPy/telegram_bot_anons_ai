@@ -186,9 +186,18 @@ async def process_news_cycle(bot: Bot) -> int:
     # 1. Rejalashtirilgan postlarni tekshirish
     await check_due_scheduled_posts(bot)
 
+    # Eskirgan yoki limitdan oshgan navbatlarni avtomatik qisqartirish
+    max_queue = getattr(config, "MAX_SCHEDULED_QUEUE", 6)
+    pruned = await database.cancel_stale_scheduled_posts(
+        max_future_hours=4,
+        max_overdue_hours=2,
+        max_queue_limit=max_queue
+    )
+    if pruned > 0:
+        print(f"[Avto-Tozalash] Navbatdan {pruned} ta eskirgan/ortiqcha post chiqarib tashlandi.")
+
     # Navbatni tekshirish: Agar navbatda allaqachon yetarlicha post bo'lsa, AI kvotasini behuda sarflamaslik
     current_queue = await database.get_scheduled_count()
-    max_queue = getattr(config, "MAX_SCHEDULED_QUEUE", 6)
     if mode == "auto" and current_queue >= max_queue:
         print(f"[Monitoring] Navbat to'la ({current_queue}/{max_queue} ta post). Yangiliklar eskirib ketmasligi va AI kvotasi tejalishi uchun navbat bo'shashi kutilmoqda.")
         return 0
@@ -396,8 +405,9 @@ async def run_scheduler_worker(bot: Bot):
                     await check_due_scheduled_posts(bot)
                     await check_daily_digest(bot)
                     await check_daily_backup(bot)
-                    # Eskirgan (4 soatdan ortiqqa cho'zilib ketgan) navbatlarni avtomatik tozalash
-                    await database.cancel_stale_scheduled_posts(max_future_hours=4)
+                    # Eskirgan (4 soatdan ortiqqa cho'zilib ketgan yoki 2 soatdan ortiq kechikkan) navbatlarni avtomatik tozalash
+                    max_q = getattr(config, "MAX_SCHEDULED_QUEUE", 6)
+                    await database.cancel_stale_scheduled_posts(max_future_hours=4, max_overdue_hours=2, max_queue_limit=max_q)
                 except Exception as sub_e:
                     print(f"[Scheduler Oraliq Tekshiruv Xatolik]: {sub_e}")
         except Exception as outer_e:

@@ -1052,6 +1052,22 @@ async def cmd_queue(message: Message):
     text, kb = await render_queue_page(page=0)
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
+@router.message(Command("clear_queue", "tozalash"))
+async def cmd_clear_queue(message: Message):
+    if not await check_is_admin(message.from_user.id):
+        await message.reply("Kechirasiz, ushbu buyruq faqat bot ma'muri uchun.")
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑 Ha, barcha navbatni tozalash", callback_data="confirm_clear_entire_queue")],
+        [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data="admin_queue:0")]
+    ])
+    await message.answer(
+        "⚠️ <b>Haqiqatan ham rejalashtirilgan barcha navbatdagi postlarni bekor qilmoqchimisiz?</b>\n\n"
+        "Bu eskirib qolgan barcha kutilayotgan postlarni o'chiradi va navbatni nollaydi.",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
 @router.callback_query(F.data.startswith("admin_queue:"))
 async def cb_admin_queue(call: CallbackQuery):
     if not await check_is_admin(call.from_user.id):

@@ -317,18 +317,41 @@ async def clear_all_scheduled_posts() -> int:
         await db.commit()
         return count
 
-async def cancel_stale_scheduled_posts(max_future_hours: int = 4) -> int:
-    """Rejalashtirilgan vaqti juda uzoqqa (masalan, 4 soatdan ortiqqa) cho'zilib ketgan yoki eskirgan postlarni bekor qilish"""
+async def cancel_stale_scheduled_posts(
+    max_future_hours: int = 4,
+    max_overdue_hours: int = 2,
+    max_queue_limit: int = 6
+) -> int:
+    """
+    Rejalashtirilgan vaqti eskirgan, muddati 2 soatdan ortiq o'tib ketgan,
+    juda uzoqqa (4+ soat) cho'zilgan yoki navbat limitidan oshgan postlarni avtomatik bekor qilish.
+    """
     now = datetime.now(timezone.utc)
-    threshold = (now + timedelta(hours=max_future_hours)).isoformat()
+    future_threshold = (now + timedelta(hours=max_future_hours)).isoformat()
+    past_threshold = (now - timedelta(hours=max_overdue_hours)).isoformat()
+    total_cancelled = 0
+
     async with get_db() as db:
+        # 1. 2 soatdan ortiq o'tib ketgan (overdue) yoki 4 soatdan keyinga rejalanganlarni bekor qilish
         cursor = await db.execute(
-            "UPDATE posts SET status = 'rejected' WHERE status = 'scheduled' AND scheduled_at > ?",
-            (threshold,)
+            "UPDATE posts SET status = 'rejected' WHERE status = 'scheduled' AND (scheduled_at > ? OR scheduled_at < ?)",
+            (future_threshold, past_threshold)
         )
-        count = cursor.rowcount
+        total_cancelled += cursor.rowcount
+
+        # 2. Agar navbatda hali ham max_queue_limit dan ortiq post qolgan bo'lsa:
+        # Eng yaqin max_queue_limit tasini saqlab, eskirib qolgan ortiqcha postlarni bekor qilish
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT id FROM posts WHERE status = 'scheduled' ORDER BY scheduled_at ASC") as cur:
+            rows = await cur.fetchall()
+            if len(rows) > max_queue_limit:
+                excess_ids = [r["id"] for r in rows[max_queue_limit:]]
+                placeholders = ",".join("?" for _ in excess_ids)
+                await db.execute(f"UPDATE posts SET status = 'rejected' WHERE id IN ({placeholders})", excess_ids)
+                total_cancelled += len(excess_ids)
+
         await db.commit()
-        return count
+    return total_cancelled
 
 async def register_user(
     user_id: int,

@@ -96,8 +96,6 @@ def render_emoji(key: str, default_char: str) -> str:
         return f'<tg-emoji emoji-id="{eid}">{default_char}</tg-emoji>'
     return default_char
 
-POST_SPACING_MINUTES = int(os.getenv("POST_SPACING_MINUTES", "10"))
-
 # Sara IT, AI, startaplar va texno-kompaniyalar RSS manbalari (AI va Startaplar 1-o'rinda)
 RSS_SOURCES = [
     {
