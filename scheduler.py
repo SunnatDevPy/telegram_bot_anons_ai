@@ -10,7 +10,7 @@ import ai_formatter
 from rss_parser import scan_all_feeds
 from ai_formatter import (
     format_news, safe_telegram_caption, generate_daily_digest,
-    attach_source_link
+    attach_source_link, strip_source_link, prepare_channel_caption
 )
 from bot_handlers import get_moderation_keyboard, get_channel_post_keyboard, get_dayjest_keyboard
 from media_helper import send_media_robust
@@ -128,9 +128,10 @@ async def check_due_scheduled_posts(bot: Bot):
     now_str = datetime.now(timezone.utc).isoformat()
     await database.set_post_status(post["id"], "published", published_at=now_str)
     try:
-        channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"))
-        cap_with_link = attach_source_link(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""))
-        await send_to_channel(bot, post["image_url"], cap_with_link, reply_markup=channel_kb)
+        source_btn_active = (await database.get_setting("channel_source_btn", "1") == "1")
+        channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"), source_name=post.get("source_name"))
+        cap_to_send = prepare_channel_caption(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""), source_btn_active=source_btn_active)
+        await send_to_channel(bot, post["image_url"], cap_to_send, reply_markup=channel_kb)
         print(f"[Avto-Reja] Post #{post['id']} kanalga muvaffaqiyatli chiqarildi.")
     except Exception as e:
         print(f"[Avto-Reja Xatolik] Post #{post['id']}: {e}")
@@ -292,8 +293,10 @@ async def process_news_cycle(bot: Bot) -> int:
                         published_at=now_str
                     )
                     try:
-                        channel_kb = await get_channel_post_keyboard(post_id=post_id, original_url=item["url"])
-                        await send_to_channel(bot, item["image_url"], uz_caption, reply_markup=channel_kb)
+                        source_btn_active = (await database.get_setting("channel_source_btn", "1") == "1")
+                        channel_kb = await get_channel_post_keyboard(post_id=post_id, original_url=item["url"], source_name=item.get("source_name"))
+                        cap_to_send = prepare_channel_caption(uz_caption, item.get("source_name", "IT"), item["url"], source_btn_active=source_btn_active)
+                        await send_to_channel(bot, item["image_url"], cap_to_send, reply_markup=channel_kb)
                         processed_count += 1
                         print(f"[Avto-Chiqarish] '{item['title']}' kanalga joylandi.")
                     except Exception as e:

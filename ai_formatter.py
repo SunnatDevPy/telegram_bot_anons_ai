@@ -519,6 +519,44 @@ def attach_source_link(text: str, source_name: str, original_url: str) -> str:
 
     return text.rstrip() + f"\n\n{link_html}"
 
+def strip_source_link(text: str) -> str:
+    """Post matnidagi '📡 Manba: ...' qismini tozalash (manba kanal posti ostidagi rangli tugmada chiqarilganda)"""
+    if not text:
+        return text
+
+    # 1. 'Mohiyati:' so'zini tozalash (agar qolib ketgan bo'lsa)
+    text = re.sub(
+        r'((?:<tg-emoji[^>]*>)?📌(?:</tg-emoji>)?)\s*(?:<b>)?\s*Mohiyati:?\s*(?:</b>)?\s*',
+        r'\1 ',
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # 2. Mavjud barcha '📡 Manba: ...' qatorlarini tozalash
+    text = re.sub(
+        r'\n*\s*(?:<tg-emoji[^>]*>)?📡(?:</tg-emoji>)?\s*(?:<b>)?\s*Manba:?\s*(?:</b>)?\s*(?:<a\s+[^>]*>.*?</a>|[^\n<]*)(?=\s*</blockquote>|\n|$)',
+        '',
+        text,
+        flags=re.IGNORECASE
+    )
+
+    # 3. Agar </blockquote> oxirida ortiqcha bo'sh qatorlar qolgan bo'lsa tozalash
+    text = re.sub(r'\n+\s*</blockquote>', '</blockquote>', text)
+
+    # 4. Ortiqcha bo'sh qatorlarni ixchamlashtirish
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    return text.strip()
+
+def prepare_channel_caption(text: str, source_name: str = "", original_url: str = "", source_btn_active: bool = True) -> str:
+    """Kanalga yuboriladigan post matnini tayyorlash:
+    - Agar Manba tugmasi (button) yoqilgan bo'lsa: matndan '📡 Manba: ...' olib tashlanadi (chiroyli, toza post).
+    - Agar Manba tugmasi o'chirilgan bo'lsa: matn ichiga '📡 Manba: <a href=...>...</a>' qo'shiladi.
+    """
+    if source_btn_active and original_url and str(original_url).startswith("http"):
+        return strip_source_link(text)
+    return attach_source_link(text, source_name, original_url)
+
+
 async def fallback_formatter(title: str, summary: str, source_name: str, original_url: str = "") -> str:
     """Gemini ishlamagan taqdirda o'zbekcha tarjima qilib, ochiluvchi sitata (blockquote expandable) bilan xavfsiz formatlash"""
     clean_title = clean_ugly_symbols(title)

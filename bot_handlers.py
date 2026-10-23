@@ -16,7 +16,7 @@ import config
 import database
 from ai_formatter import (
     regenerate_news, safe_telegram_caption, answer_ai_assistant_question,
-    attach_source_link, generate_daily_digest
+    attach_source_link, strip_source_link, prepare_channel_caption, generate_daily_digest
 )
 from media_helper import send_media_robust, send_user_preview_media
 from diagnostics import get_system_health, format_health_html
@@ -309,8 +309,12 @@ async def render_queue_page(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
 
     return "\n".join(lines), InlineKeyboardMarkup(inline_keyboard=kb_buttons)
 
-async def get_channel_post_keyboard(post_id: Optional[int] = None, original_url: Optional[str] = None) -> Optional[InlineKeyboardMarkup]:
-    """Kanalga chiquvchi post ostiga ixcham inline tugmalar bloki (Manba va AI maslahat alohida boshqariladi)"""
+async def get_channel_post_keyboard(
+    post_id: Optional[int] = None,
+    original_url: Optional[str] = None,
+    source_name: Optional[str] = None
+) -> Optional[InlineKeyboardMarkup]:
+    """Kanalga chiquvchi post ostiga zamonaviy rangli inline tugmalar bloki (Manba ko'k, AI qizil)"""
     default_src = "1" if getattr(config, "ENABLE_CHANNEL_SOURCE_BUTTON", True) else "0"
     default_ai = "1" if getattr(config, "ENABLE_CHANNEL_AI_BUTTON", True) else "0"
     source_btn_enabled = (await database.get_setting("channel_source_btn", default_src) == "1")
@@ -323,14 +327,18 @@ async def get_channel_post_keyboard(post_id: Optional[int] = None, original_url:
     buttons = []
     row1 = []
     if source_btn_enabled and original_url and str(original_url).startswith("http"):
-        row1.append(InlineKeyboardButton(text="Manba ↗", url=str(original_url), style="success"))
+        src_label = str(source_name).strip() if source_name else "Manba"
+        # primary - Telegramda ko'k rangli (Telegram link arrow ↗ bilan) zamonaviy tugma hosil qiladi
+        row1.append(InlineKeyboardButton(text=src_label, url=str(original_url), style="primary"))
 
     if ai_btn_enabled and post_id:
         bot_user = getattr(config, "BOT_USERNAME", "").lstrip("@")
         if bot_user:
+            # danger - Telegramda qizil rangli zamonaviy tugma hosil qiladi
             row1.append(InlineKeyboardButton(
-                text="🤖 AI bilan muhokama",
-                url=f"https://t.me/{bot_user}?start=discuss_{post_id}"
+                text="🤖 AI muhokama",
+                url=f"https://t.me/{bot_user}?start=discuss_{post_id}",
+                style="danger"
             ))
 
     if row1:
@@ -866,7 +874,8 @@ async def cb_user_post(call: CallbackQuery):
 
     nav_row = [InlineKeyboardButton(text="⬅️ Top 10 ro'yxatiga qaytish", callback_data="user_refresh_top")]
     if post.get("url"):
-        nav_row.insert(0, InlineKeyboardButton(text="Manba ↗", url=post["url"], style="success"))
+        src_label = str(post.get("source_name", "")).strip() or "Manba"
+        nav_row.insert(0, InlineKeyboardButton(text=src_label, url=post["url"], style="primary"))
 
     back_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤖 Ushbu maqola bo'yicha AI bilan muhokama", callback_data=f"ai_discuss_again:{post_id}")],
@@ -1297,9 +1306,10 @@ async def cb_q_publish(call: CallbackQuery, bot: Bot):
 
     try:
         from scheduler import send_to_channel
-        channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"))
-        cap_with_link = attach_source_link(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""))
-        await send_to_channel(bot, post["image_url"], cap_with_link, reply_markup=channel_kb)
+        source_btn_active = (await database.get_setting("channel_source_btn", "1") == "1")
+        channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"), source_name=post.get("source_name"))
+        cap_to_send = prepare_channel_caption(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""), source_btn_active=source_btn_active)
+        await send_to_channel(bot, post["image_url"], cap_to_send, reply_markup=channel_kb)
         await call.answer("Post kanalga muvaffaqiyatli chiqarildi! 🚀", show_alert=False)
     except Exception as e:
         await call.answer(f"Xatolik: {e}", show_alert=True)
@@ -1353,9 +1363,10 @@ async def cb_queue_pub_first(call: CallbackQuery, bot: Bot):
 
     try:
         from scheduler import send_to_channel
-        channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"))
-        cap_with_link = attach_source_link(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""))
-        await send_to_channel(bot, post["image_url"], cap_with_link, reply_markup=channel_kb)
+        source_btn_active = (await database.get_setting("channel_source_btn", "1") == "1")
+        channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"), source_name=post.get("source_name"))
+        cap_to_send = prepare_channel_caption(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""), source_btn_active=source_btn_active)
+        await send_to_channel(bot, post["image_url"], cap_to_send, reply_markup=channel_kb)
         await call.answer(f"«{post['title'][:30]}...» kanalga chiqarildi! 🚀", show_alert=False)
     except Exception as e:
         await call.answer(f"Xatolik: {e}", show_alert=True)
@@ -1618,12 +1629,13 @@ async def cb_publish_post(call: CallbackQuery, bot: Bot):
         return
 
     now_str = datetime.now(timezone.utc).isoformat()
-    final_caption = attach_source_link(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""))
+    source_btn_active = (await database.get_setting("channel_source_btn", "1") == "1")
+    final_caption = prepare_channel_caption(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""), source_btn_active=source_btn_active)
     photo_caption = safe_telegram_caption(final_caption, config.CHANNEL_FOOTER, max_len=1024)
     text_message = safe_telegram_caption(final_caption, config.CHANNEL_FOOTER, max_len=4096)
 
     try:
-        channel_kb = await get_channel_post_keyboard(post_id=post_id, original_url=post.get("url"))
+        channel_kb = await get_channel_post_keyboard(post_id=post_id, original_url=post.get("url"), source_name=post.get("source_name"))
         sent_successfully = False
         if post.get("image_url"):
             sent_successfully = await send_media_robust(
