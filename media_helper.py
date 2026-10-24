@@ -15,6 +15,7 @@ HEADERS = {
 import os
 import io
 from PIL import Image, ImageDraw, ImageFont
+import config
 
 FONT_PATHS = [
     os.path.join(os.path.dirname(__file__), "assets", "font.ttf"),
@@ -43,8 +44,17 @@ def apply_watermark(image_bytes: bytes) -> bytes:
         base_img = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
         width, height = base_img.size
 
-        # Kichik o'lchamli rasmlarga watermark qo'yilmaydi
-        if width < 300 or height < 200:
+        # Kichik o'lchamli rasmlar (masalan emojilar yoki mayda ikonkalar) post banneriga yaramaydi
+        # Bunday holatda kanalning rasmiy HD logotipidan foydalanamiz
+        if width < 320 or height < 200:
+            if hasattr(config, "LOGO_PATH") and os.path.exists(config.LOGO_PATH):
+                try:
+                    with open(config.LOGO_PATH, "rb") as lf:
+                        logo_data = lf.read()
+                        if logo_data != image_bytes:
+                            return apply_watermark(logo_data)
+                except Exception:
+                    pass
             out_io = io.BytesIO()
             base_img.convert("RGB").save(out_io, format="JPEG", quality=95, subsampling=0)
             return out_io.getvalue()
@@ -141,7 +151,7 @@ async def send_media_robust(
 
     # 1. Avval fayl baytlarini httpx orqali yuklab olish (CDN va bot-bloklashlarni yengish)
     try:
-        async with httpx.AsyncClient(headers=HEADERS, timeout=16.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(headers=HEADERS, timeout=25.0, follow_redirects=True) as client:
             resp = await client.get(clean_url)
             if resp.status_code == 200 and len(resp.content) > 500:
                 content_type = resp.headers.get("content-type", "").lower()

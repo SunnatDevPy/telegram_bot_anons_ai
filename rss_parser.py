@@ -15,6 +15,59 @@ HEADERS = {
     )
 }
 
+JUNK_IMAGE_PATTERNS = [
+    "s.w.org", "core/emoji", "/emoji", "emoji/", "wp-smiley", "smiley",
+    "gravatar.com", "avatar", "spacer", "1x1", "tracking", "pixel",
+    "feedburner", "doubleclick", "badge", "icon-", "/icons/", "favicon",
+    "wp-includes", "wp-content/plugins", "/plugins/", "share-button",
+    "site-logo", "wp.com/latex.php"
+]
+
+def is_junk_or_emoji_url(url: Optional[str]) -> bool:
+    """Emoji, avatar, tracking pixel yoki servis ikonkalarini aniqlash"""
+    if not url:
+        return True
+    u = url.lower()
+    return any(p in u for p in JUNK_IMAGE_PATTERNS)
+
+def is_video_or_gif_url(url: Optional[str]) -> bool:
+    """Media fayli video (.mp4, .webm) yoki animatsiya (.gif) ekanligini aniqlash"""
+    if not url:
+        return False
+    u = url.lower()
+    return any(ext in u for ext in [".mp4", ".webm", ".mov", ".m4v", ".ogv", ".mkv", ".gif"])
+
+def is_low_res_url(url: Optional[str]) -> bool:
+    """Rasm o'lchami kichik thumbnail, emoji yoki past sifatli ekanligini aniqlash"""
+    if not url:
+        return True
+
+    # Video yoki GIF larni statik rasm o'lchami bo'yicha cheklamaymiz
+    if is_video_or_gif_url(url):
+        return False
+
+    if is_junk_or_emoji_url(url):
+        return True
+
+    low_markers = [
+        "-184x111", "-150x150", "-100x100", "-300x",
+        "thumbnail", "/thumb/", "avatar", "small", "160x", "184x",
+        "72x72", "48x48", "32x32", "16x16", "64x64", "80x80", "96x96",
+        "120x120", "128x128", "200x200", "250x250"
+    ]
+    u = url.lower()
+    if any(m in u for m in low_markers):
+        return True
+
+    # Regex orqali kichik o'lchamdagi piksellarni aniqlash: masalan -72x72., /120x90/, _200x150.jpg
+    dim_match = re.search(r'[-_/](\d{1,4})x(\d{1,4})[-_./]', u)
+    if dim_match:
+        w, h = int(dim_match.group(1)), int(dim_match.group(2))
+        if w < 400 or h < 225:
+            return True
+
+    return False
+
 def extract_image_from_entry(entry: Any) -> Optional[str]:
     """RSS entry ob'ektidan rasm, animatsiyali GIF yoki video URL manzilini qidirish"""
     # 1. media_content
@@ -24,35 +77,38 @@ def extract_image_from_entry(entry: Any) -> Optional[str]:
             url = item.get("url")
             m_type = item.get("type", "").lower()
             medium = item.get("medium", "").lower()
-            if url and ("video" in m_type or medium == "video" or "gif" in m_type or any(url.lower().endswith(ext) for ext in [".gif", ".mp4", ".webm", ".mov"])):
+            if url and not is_junk_or_emoji_url(url) and ("video" in m_type or medium == "video" or "gif" in m_type or is_video_or_gif_url(url)):
                 return url
 
         # Keyin sifatli statik rasmlarni qidirish
         for item in entry.media_content:
             url = item.get("url")
-            if url and ("image" in item.get("type", "") or item.get("medium") == "image" or any(url.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp"])):
+            if url and not is_junk_or_emoji_url(url) and not is_low_res_url(url) and ("image" in item.get("type", "") or item.get("medium") == "image" or any(url.lower().endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".webp"])):
                 return url
-        if entry.media_content[0].get("url"):
-            return entry.media_content[0].get("url")
+        first_url = entry.media_content[0].get("url")
+        if first_url and not is_junk_or_emoji_url(first_url) and not is_low_res_url(first_url):
+            return first_url
 
     # 2. enclosures (ko'pincha video va gif fayllar shu yerda bo'ladi)
     if entry.get("enclosures"):
         for enc in entry.enclosures:
             href = enc.get("href")
             e_type = enc.get("type", "").lower()
-            if href and ("video" in e_type or "gif" in e_type or any(href.lower().endswith(ext) for ext in [".gif", ".mp4", ".webm"])):
+            if href and not is_junk_or_emoji_url(href) and ("video" in e_type or "gif" in e_type or is_video_or_gif_url(href)):
                 return href
         for enc in entry.enclosures:
-            if enc.get("href"):
-                return enc["href"]
+            href = enc.get("href")
+            if href and not is_junk_or_emoji_url(href) and not is_low_res_url(href):
+                return href
 
     # 3. media_thumbnail
     if entry.get("media_thumbnail"):
         for thumb in entry.media_thumbnail:
-            if thumb.get("url"):
-                return thumb["url"]
+            t_url = thumb.get("url")
+            if t_url and not is_junk_or_emoji_url(t_url) and not is_low_res_url(t_url):
+                return t_url
 
-    # 4. Content yoki Summary ichidagi <video>, <source>, yoki <img src="...gif"> teglari
+    # 4. Content yoki Summary ichidagi <video>, <source>, yoki sifatli <img> teglari
     html_sources = []
     if "content" in entry and entry.content:
         for c in entry.content:
@@ -62,19 +118,24 @@ def extract_image_from_entry(entry: Any) -> Optional[str]:
         html_sources.append(entry.summary)
 
     for html_text in html_sources:
-        # Video yoki GIF teglari
+        # Video teglari
         vid_match = re.search(r'<(?:video|source)[^>]+src=["\'](https?://[^"\']+\.(?:mp4|webm|mov))["\']', html_text, re.IGNORECASE)
-        if vid_match:
+        if vid_match and not is_junk_or_emoji_url(vid_match.group(1)):
             return vid_match.group(1)
 
-        gif_match = re.search(r'<img[^>]+src=["\'](https?://[^"\']+\.gif)["\']', html_text, re.IGNORECASE)
-        if gif_match:
-            return gif_match.group(1)
+        # GIF animatsiyalar
+        for gif_m in re.finditer(r'<img[^>]+src=["\'](https?://[^"\']+\.gif)["\']', html_text, re.IGNORECASE):
+            g_url = gif_m.group(1)
+            if not is_junk_or_emoji_url(g_url):
+                return g_url
 
-        img_match = re.search(r'<img[^>]+src=["\'](https?://[^"\']+)["\']', html_text, re.IGNORECASE)
-        if img_match:
-            img_url = img_match.group(1)
-            if not any(k in img_url.lower() for k in ["spacer", "1x1", "avatar", "icon"]):
+        # Sifatli statik rasmlar (emojilar, smileylar va ikonkalar qat'iy chetlab o'tiladi)
+        for img_match in re.finditer(r'<img\s+([^>]*?)src=["\'](https?://[^"\']+)["\']([^>]*)>', html_text, re.IGNORECASE):
+            attrs = (img_match.group(1) + " " + img_match.group(3)).lower()
+            img_url = img_match.group(2)
+            if any(k in attrs for k in ["wp-smiley", "emoji", "avatar", "icon"]):
+                continue
+            if not is_junk_or_emoji_url(img_url) and not is_low_res_url(img_url):
                 return img_url
 
     return None
@@ -82,21 +143,24 @@ def extract_image_from_entry(entry: Any) -> Optional[str]:
 async def extract_og_image(url: str, client: httpx.AsyncClient) -> Optional[str]:
     """RSS media bermagan taqdirda, maqola sahifasidan og:video, og:image yoki twitter:image olish"""
     try:
-        resp = await client.get(url, timeout=7.0, follow_redirects=True)
+        resp = await client.get(url, timeout=9.0, follow_redirects=True)
         if resp.status_code == 200:
             # 1. Avval og:video ni tekshirish
             v_match = re.search(r'<meta\s+property=["\']og:video(?::secure_url)?["\']\s+content=["\'](https?://[^"\']+)["\']', resp.text, re.IGNORECASE)
             if v_match:
-                return v_match.group(1)
+                return v_match.group(1).replace("&amp;", "&")
 
             # 2. Keyin og:image yoki twitter:image
-            m = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', resp.text, re.IGNORECASE)
-            if not m:
-                m = re.search(r'<meta\s+content=["\']([^"\']+)["\']\s+property=["\']og:image["\']', resp.text, re.IGNORECASE)
-            if not m:
-                m = re.search(r'<meta\s+name=["\']twitter:image["\']\s+content=["\']([^"\']+)["\']', resp.text, re.IGNORECASE)
-            if m:
-                return m.group(1)
+            for pattern in [
+                r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']',
+                r'<meta\s+content=["\']([^"\']+)["\']\s+property=["\']og:image["\']',
+                r'<meta\s+name=["\']twitter:image["\']\s+content=["\']([^"\']+)["\']'
+            ]:
+                m = re.search(pattern, resp.text, re.IGNORECASE)
+                if m:
+                    cand = m.group(1).replace("&amp;", "&")
+                    if not is_junk_or_emoji_url(cand) and not is_low_res_url(cand):
+                        return cand
     except Exception:
         pass
     return None
@@ -105,7 +169,7 @@ def upgrade_image_url(url: Optional[str]) -> Optional[str]:
     """Kichik pikselli yoki past sifatli thumbnail rasmlarni original Full HD sifatiga ko'tarish"""
     if not url:
         return None
-    clean = url.strip()
+    clean = url.strip().replace("&amp;", "&")
     
     # 1. GSMArena: masalan .../-184x111/gsmarena_001.jpg -> .../inline/gsmarena_001.jpg
     if "gsmarena.com" in clean:
@@ -120,17 +184,6 @@ def upgrade_image_url(url: Optional[str]) -> Optional[str]:
         clean = re.sub(r'\?(?:resize|fit|w|h|crop)=[^&]+(&.*)?$', '', clean)
 
     return clean
-
-def is_low_res_url(url: Optional[str]) -> bool:
-    """Rasm o'lchami kichik thumbnail ekanligini aniqlash"""
-    if not url:
-        return True
-    low_markers = [
-        "-184x111", "-150x150", "-100x100", "-300x",
-        "thumbnail", "/thumb/", "avatar", "small", "160x", "184x"
-    ]
-    u = url.lower()
-    return any(m in u for m in low_markers)
 
 DEAL_KEYWORDS = [
     "deal", "deals", "save $", "save £", "save €", "discount", "discounts",
@@ -276,13 +329,23 @@ async def fetch_feed_entries(source: Dict[str, str], client: httpx.AsyncClient, 
             if await is_duplicate_news(link, clean_title):
                 continue
 
-            # Rasm topish (Eng sifatli HD rasmni tanlash)
+            # Rasm yoki video topish (Eng sifatli HD media tanlash)
             img_url = extract_image_from_entry(entry)
-            if not img_url or is_low_res_url(img_url):
-                og_img = await extract_og_image(link, client)
-                if og_img:
-                    img_url = og_img
+            is_video = is_video_or_gif_url(img_url)
+
+            # Agar rasm video bo'lmasa va (topilmagan, past sifatli yoki emoji bo'lsa),
+            # sahifaning asl OpenGraph (Full HD banner yoki og:video) mediasini olamiz
+            if not is_video and (not img_url or is_low_res_url(img_url) or is_junk_or_emoji_url(img_url)):
+                og_media = await extract_og_image(link, client)
+                if og_media:
+                    img_url = og_media
+
             img_url = upgrade_image_url(img_url)
+
+            # Agar yakuniy rasm ham past sifatli yoki emoji bo'lib qolsa, buzilgan holatda yubormaslik uchun tozalaymiz
+            if img_url and not is_video_or_gif_url(img_url):
+                if is_junk_or_emoji_url(img_url) or is_low_res_url(img_url):
+                    img_url = None
 
             priority = get_topic_priority(clean_title, summary, source.get("category", ""))
             results.append({
