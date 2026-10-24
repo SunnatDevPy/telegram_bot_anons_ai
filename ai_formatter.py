@@ -624,7 +624,7 @@ QAT'IY FORMAT TALABLARI (Har bir bo'lim orasida ALBATTA 2 ta bo'sh qator joy tas
 💡 <b>Xulosa:</b>
 (1 ta teran tahliliy jumla bilan mazkur yangilikning soha kelajagiga ta'siri).</blockquote>
 
-🏷 #AI #Texnologiya #{source_name.replace(' ', '')}
+🏷 #(Mavzuga mos 3-4 ta aniq dinamik hashtag: kompaniya nomi, model yoki yo'nalish, masalan #Anthropic #Claude #AIXavfsizlik yoki #Nvidia #Blackwell #GPU yoki #OpenAI #ChatGPT)
 
 📡 <b>Manba:</b> {source_name}
 
@@ -633,10 +633,11 @@ QOIDALAR:
 2. 📡 <b>Manba:</b> qismi sitata (<blockquote) ichida emas, sitatadan TASHQARIDA va hashtagdan keyin, eng pastda tursin!
 3. Bo'limlar bir-biriga yopishib qolmasin, oralarida aniq bo'sh qatorlar bo'lsin.
 4. "Asosiy tafsilotlar" bo'limida 2-3 ta sermazmun punkt bo'lsin, umumiy yoki quruq gaplar bo'lmasin. Haqiqiy faktlar, raqamlar va texnik xususiyatlarni kirit!
-5. HECH QACHON do'kon chegirmalari (deals), aksiyalar, narx arzonlashuvi (Save $..., % off, chegirma) haqida yozma! Texnologiyaning o'ziga e'tibor qarat!
-6. HECH QACHON [...] yoki ... yoki chala gap yozma!
-7. HECH QACHON Markdown yulduzchalaridan (**matn**) foydalanma! Qalin matn uchun faqat <b>matn</b> HTML teglaridan foydalan!
-8. Telegram caption limiti 1024 belgi! Jami ko'rinadigan matn uzunligi 750-880 belgi oralig'ida bo'lsin.
+5. 🏷 Hashtaglar: umumiy emas, mavzuning o'ziga doir 3-4 ta aniq hashtag yoz (masalan: #Apple #M4Pro #MacBook yoki #DeepSeek #OpenSource #LLM).
+6. HECH QACHON do'kon chegirmalari (deals), aksiyalar, narx arzonlashuvi (Save $..., % off, chegirma) haqida yozma! Texnologiyaning o'ziga e'tibor qarat!
+7. HECH QACHON [...] yoki ... yoki chala gap yozma!
+8. HECH QACHON Markdown yulduzchalaridan (**matn**) foydalanma! Qalin matn uchun faqat <b>matn</b> HTML teglaridan foydalan!
+9. Telegram caption chegarasi qat'iy 1024 belgi! Kanal imzosi va tugmalar to'liq sig'ishi uchun, postning sof matn uzunligi 680-780 belgi oralig'ida bo'lsin (800 belgidan aslo oshmasin, shunda 💡 Xulosa va 🏷 Hashtaglar hech qachon kesilib qolmaydi)!
 """
 
     global LAST_FORMATTER_USED

@@ -163,6 +163,30 @@ RSS_SOURCES = [
         "slug": "engadget",
         "url": "https://www.engadget.com/rss.xml",
         "category": "Yangi Texnologiyalar"
+    },
+    {
+        "name": "Nvidia Blog",
+        "slug": "nvidia_blog",
+        "url": "https://blogs.nvidia.com/feed/",
+        "category": "GPU, Chiplar & AI Infratuzilma"
+    },
+    {
+        "name": "Hugging Face Blog",
+        "slug": "huggingface_blog",
+        "url": "https://huggingface.co/blog/feed.xml",
+        "category": "Open-Source AI & Modellar"
+    },
+    {
+        "name": "Microsoft Blog",
+        "slug": "microsoft_blog",
+        "url": "https://blogs.microsoft.com/feed/",
+        "category": "IT & Microsoft AI"
+    },
+    {
+        "name": "MIT Technology Review",
+        "slug": "mit_tech_review",
+        "url": "https://www.technologyreview.com/feed/",
+        "category": "Ilmiy AI & Kvant Texnologiyalar"
     }
 ]
 

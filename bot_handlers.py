@@ -12,8 +12,12 @@ from aiogram.types import (
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
 
+import httpx
+from urllib.parse import urlparse
 import config
 import database
+import rss_parser
+import ai_formatter
 from ai_formatter import (
     regenerate_news, safe_telegram_caption, answer_ai_assistant_question,
     attach_source_link, strip_source_link, prepare_channel_caption, generate_daily_digest
@@ -601,6 +605,135 @@ async def cmd_start(message: Message):
         
         digest_text, kb = await render_top_10_digest(is_admin=False)
         await message.answer(digest_text, parse_mode="HTML", reply_markup=kb)
+
+async def create_post_from_url(url: str, admin_id: int, bot: Bot, status_msg: Optional[Message] = None) -> bool:
+    """Admin tomonidan yuborilgan veb-havolani tahlil qilib, NeuraTech moderatsiya postiga aylantirish"""
+    try:
+        clean_url = url.strip()
+        if not (clean_url.startswith("http://") or clean_url.startswith("https://")):
+            if status_msg:
+                await status_msg.edit_text("❌ Noto'g'ri havola formati. Iltimos, to'liq havola (https://...) yuboring.", parse_mode="HTML")
+            return False
+
+        if status_msg:
+            await status_msg.edit_text("⏳ <i>Maqola sahifasi yuklab olinmoqda va tahlil qilinmoqda...</i>", parse_mode="HTML")
+
+        async with httpx.AsyncClient(headers=rss_parser.HEADERS, timeout=15.0, follow_redirects=True) as client:
+            resp = await client.get(clean_url)
+            if resp.status_code != 200:
+                if status_msg:
+                    await status_msg.edit_text(f"❌ Saytga ulanib bo'lmadi (HTTP {resp.status_code}).", parse_mode="HTML")
+                return False
+
+            html_text = resp.text
+
+            # Sarlavha
+            title_m = re.search(r'<meta\s+property=["\']og:title["\']\s+content=["\']([^"\']+)["\']', html_text, re.IGNORECASE)
+            if not title_m:
+                title_m = re.search(r'<title[^>]*>([^<]+)</title>', html_text, re.IGNORECASE)
+            raw_title = html.unescape(title_m.group(1)).strip() if title_m else "Yangi IT xabari"
+            title = re.sub(r'\s*[\-|–|—|\|]\s*.*$', '', raw_title).strip()
+            title = rss_parser.clean_html(title)
+
+            # Tavsif
+            desc_m = re.search(r'<meta\s+(?:property|name)=["\'](?:og:description|description)["\']\s+content=["\']([^"\']+)["\']', html_text, re.IGNORECASE)
+            desc = html.unescape(desc_m.group(1)).strip() if desc_m else ""
+
+            # Kontekst uchun sahifadagi matn paragraflari
+            paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', html_text, re.IGNORECASE | re.DOTALL)
+            clean_paras = []
+            for p in paragraphs[:5]:
+                cp = rss_parser.clean_html(p)
+                if len(cp) > 40 and not any(w in cp.lower() for w in ["cookie", "subscribe", "privacy", "copyright"]):
+                    clean_paras.append(cp)
+            full_context = desc + "\n\n" + "\n\n".join(clean_paras)
+            summary = full_context[:2500].strip() or title
+
+            # Rasm yoki Video
+            img_url = await rss_parser.extract_og_image(clean_url, client)
+            img_url = rss_parser.upgrade_image_url(img_url)
+
+            # Manba nomi (Domain)
+            domain = urlparse(clean_url).netloc.lower()
+            if domain.startswith("www."):
+                domain = domain[4:]
+            domain_map = {
+                "techcrunch.com": "TechCrunch",
+                "theverge.com": "The Verge",
+                "tomshardware.com": "Tom's Hardware",
+                "arstechnica.com": "Ars Technica",
+                "gsmarena.com": "GSMArena",
+                "engadget.com": "Engadget",
+                "the-decoder.com": "The Decoder",
+                "marktechpost.com": "MarkTechpost",
+                "blogs.nvidia.com": "Nvidia Blog",
+                "huggingface.co": "Hugging Face",
+                "blogs.microsoft.com": "Microsoft Blog",
+                "technologyreview.com": "MIT Technology Review"
+            }
+            source_name = domain_map.get(domain, domain.split(".")[0].capitalize())
+
+        if status_msg:
+            await status_msg.edit_text("🧠 <i>Gemini AI orqali NeuraTech postiga aylantirilmoqda...</i>", parse_mode="HTML")
+
+        uz_caption = await ai_formatter.format_news(title, summary, source_name, category="IT & AI", original_url=clean_url)
+
+        # Bazaga kiritish
+        post_id = await database.create_post(
+            url=clean_url,
+            title=title,
+            original_summary=summary,
+            uz_caption=uz_caption,
+            image_url=img_url,
+            source_name=source_name,
+            status="draft"
+        )
+
+        if not post_id:
+            if status_msg:
+                await status_msg.edit_text("⚠️ Ushbu havola bo'yicha xabar bazada allaqachon mavjud.")
+            return False
+
+        if status_msg:
+            try:
+                await status_msg.delete()
+            except Exception:
+                pass
+
+        # Adminga post ko'rinishida yuborish
+        from scheduler import send_draft_to_admin
+        await send_draft_to_admin(
+            bot=bot,
+            admin_id=admin_id,
+            post_id=post_id,
+            image_url=img_url,
+            caption=uz_caption,
+            original_url=clean_url,
+            source_name=source_name
+        )
+        return True
+    except Exception as e:
+        if status_msg:
+            await status_msg.edit_text(f"❌ Xatolik yuz berdi: <code>{html.escape(str(e))}</code>", parse_mode="HTML")
+        return False
+
+@router.message(Command("post", "create", "yarat"))
+async def cmd_post(message: Message, bot: Bot):
+    if not await check_is_admin(message.from_user.id):
+        await message.reply("Kechirasiz, ushbu buyruq faqat bot ma'muri uchun.")
+        return
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "✍️ <b>Iltimos, maqola havolasini kiriting:</b>\n"
+            "Masalan: <code>/post https://techcrunch.com/...</code>\n\n"
+            "<i>Yoki shunchaki maqola havolasini to'g'ridan-to'g'ri botga yuboring.</i>",
+            parse_mode="HTML"
+        )
+        return
+    url = parts[1].strip()
+    status_msg = await message.answer("⏳ <i>Maqola havolasi qabul qilindi. Sahifa tahlil qilinmoqda...</i>", parse_mode="HTML")
+    await create_post_from_url(url, message.from_user.id, bot, status_msg)
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
@@ -2178,7 +2311,13 @@ async def handle_incoming_messages(message: Message, bot: Bot):
                 parse_mode="HTML",
                 reply_markup=kb
             )
-            return
+    # 2.5. Agar Admin veb-havola yuborsa (Tezkor Post Yaratish)
+    is_admin = await check_is_admin(message.from_user.id)
+    raw_text = (message.text or "").strip()
+    if is_admin and (raw_text.startswith("http://") or raw_text.startswith("https://")):
+        status_msg = await message.answer("⏳ <i>Maqola havolasi qabul qilindi. Sahifa tahlil qilinmoqda...</i>", parse_mode="HTML")
+        await create_post_from_url(raw_text, message.from_user.id, bot, status_msg)
+        return
 
     # 3. Agar foydalanuvchi AI Maslahatchi holatida bo'lsa (umumiy, dayjest yoki maqola bo'yicha):
     if message.from_user.id in user_ai_state:

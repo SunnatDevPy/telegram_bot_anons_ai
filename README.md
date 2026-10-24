@@ -110,6 +110,7 @@ flowchart TD
 | `/clear_queue` yoki `/tozalash` | Eskirib qolgan barcha navbatdagi postlarni 1 ta bosishda tozalash |
 | `/emojis` yoki `/emoji` | Telegram Premium animatsiyali emojilarini boshqarish paneli |
 | `/feeds` | RSS manbalarini yoqish yoki o'chirish paneli |
+| `/post <url>` | Istalgan veb-havolani 5 soniyada to'liq NeuraTech postiga aylantirish |
 | `/help` | Barcha buyruqlar va qo'llanmani ko'rish |
 
 ---
