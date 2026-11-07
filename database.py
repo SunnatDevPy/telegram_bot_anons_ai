@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import aiosqlite
 from datetime import datetime, timezone, timedelta
@@ -12,6 +13,13 @@ async def init_db():
     """Baza jadvallarini yaratish va boshlang'ich sozlamalarni kiritish"""
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
+
+        # WAL rejimi: bir vaqtda o'qish va yozish imkonini beradi (scheduler + admin panel
+        # parallel ishlaganda "database is locked" xatolarining oldini oladi)
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA synchronous=NORMAL")
+        await db.execute("PRAGMA busy_timeout=5000")
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
@@ -46,6 +54,27 @@ async def init_db():
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS polls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                question TEXT NOT NULL,
+                options_json TEXT NOT NULL,
+                poll_type TEXT NOT NULL DEFAULT 'regular',
+                correct_option_id INTEGER,
+                explanation TEXT,
+                topic TEXT,
+                status TEXT NOT NULL DEFAULT 'draft',
+                created_at TEXT NOT NULL,
+                published_at TEXT
+            )
+        """)
+
+        # Tez-tez ishlatiladigan so'rovlar uchun indekslar (baza o'sganda sekinlashuvni oldini oladi)
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_posts_scheduled ON posts(status, scheduled_at)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source_name)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(status, published_at)")
+
         await db.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('mode', ?)",
             (config.DEFAULT_MODE,)
@@ -69,7 +98,38 @@ async def init_db():
             await db.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('channel_ai_btn', '1')")
         await db.commit()
 
+    await migrate_settings_keys()
     await load_emojis_to_config()
+
+async def migrate_settings_keys():
+    """
+    Bir martalik migratsiya: eski kod versiyasidan qolgan noto'g'ri nomlangan
+    (feed_enabled_<slug>) kalitlarni joriy formatga (feed_<slug>_enabled) ko'chirish.
+    Bu "schema drift"ni oldini oladi va bazada yetim kalit qoldirmaydi.
+    """
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT key, value FROM settings") as cursor:
+            rows = await cursor.fetchall()
+
+        legacy = {}
+        for row in rows:
+            key = row["key"]
+            if key.startswith("feed_enabled_"):
+                slug = key[len("feed_enabled_"):]
+                legacy[slug] = row["value"]
+
+        for slug, value in legacy.items():
+            new_key = f"feed_{slug}_enabled"
+            await db.execute(
+                "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
+                (new_key, value)
+            )
+            await db.execute("DELETE FROM settings WHERE key = ?", (f"feed_enabled_{slug}",))
+
+        if legacy:
+            await db.commit()
+            print(f"[DB Migratsiya] {len(legacy)} ta eski RSS sozlama kaliti yangi formatga ko'chirildi.")
 
 async def load_emojis_to_config():
     """Bazadagi saqlangan Premium Emojilarni config.PREMIUM_EMOJIS ga yuklash"""
@@ -132,6 +192,14 @@ def normalize_url(url: str) -> str:
     path = parsed.path.rstrip("/")
     return f"{netloc}{path}".lower()
 
+def escape_like(value: str) -> str:
+    """
+    SQL LIKE operatori uchun maxsus belgilarni (% va _) ekranlaydi.
+    Busiz foydalanuvchi kiritgan yoki URL'dagi '_' belgisi wildcard sifatida
+    talqin qilinib, bog'liq bo'lmagan yozuvlar bilan noto'g'ri moslik berishi mumkin.
+    """
+    return str(value).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
 async def is_url_exists(url: str) -> bool:
     clean_u = normalize_url(url)
     if not clean_u:
@@ -139,11 +207,11 @@ async def is_url_exists(url: str) -> bool:
     slug = clean_u.split("/")[-1] if "/" in clean_u else clean_u
     async with get_db() as db:
         if len(slug) >= 12:
-            query = "SELECT 1 FROM posts WHERE url LIKE ? OR url LIKE ?"
-            params = (f"%{clean_u}%", f"%{slug}%")
+            query = "SELECT 1 FROM posts WHERE url LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\'"
+            params = (f"%{escape_like(clean_u)}%", f"%{escape_like(slug)}%")
         else:
-            query = "SELECT 1 FROM posts WHERE url LIKE ?"
-            params = (f"%{clean_u}%",)
+            query = "SELECT 1 FROM posts WHERE url LIKE ? ESCAPE '\\'"
+            params = (f"%{escape_like(clean_u)}%",)
         async with db.execute(query, params) as cursor:
             row = await cursor.fetchone()
             return row is not None
@@ -461,12 +529,12 @@ async def search_posts(query: str, limit: int = 5) -> List[Dict[str, Any]]:
     clean_q = query.strip()
     if not clean_q:
         return []
-    pattern = f"%{clean_q}%"
+    pattern = f"%{escape_like(clean_q)}%"
     async with get_db() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("""
             SELECT * FROM posts 
-            WHERE status != 'rejected' AND (title LIKE ? OR uz_caption LIKE ? OR original_summary LIKE ?)
+            WHERE status != 'rejected' AND (title LIKE ? ESCAPE '\\' OR uz_caption LIKE ? ESCAPE '\\' OR original_summary LIKE ? ESCAPE '\\')
             ORDER BY id DESC LIMIT ?
         """, (pattern, pattern, pattern, limit)) as cursor:
             rows = await cursor.fetchall()
@@ -495,22 +563,32 @@ async def get_today_published_posts(date_prefix: str, limit: int = 5) -> List[Di
             rows = await cursor.fetchall()
             return [dict(r) for r in rows]
 
-async def cleanup_old_posts(days: int = 45):
-    """Eski postlarni tozalash va disk hajmini siqish (joy to'lib ketmasligi uchun)"""
+async def cleanup_old_posts(days: int = 45, draft_days: int = 7) -> int:
+    """Eski postlarni tozalash va disk hajmini siqish (joy to'lib ketmasligi uchun). Avtomatik rad etilgan draft postlar sonini qaytaradi."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     rejected_cutoff = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
+    draft_cutoff = (datetime.now(timezone.utc) - timedelta(days=draft_days)).isoformat()
+    stale_draft_count = 0
     try:
         async with get_db() as db:
             # 1. 14 kundan oshgan bekor qilingan (rejected) xabarlarni o'chirish
             await db.execute("DELETE FROM posts WHERE status = 'rejected' AND created_at < ?", (rejected_cutoff,))
-            # 2. 45 kundan oshgan arxiv postlarni tozalash
+            # 2. Muddatdan oshgan tasdiqlanmagan (draft) xabarlarni "rejected" holatiga o'tkazish.
+            #    Aks holda admin ko'rmay qolgan qoralamalar bazada abadiy osilib qoladi.
+            cursor = await db.execute(
+                "UPDATE posts SET status = 'rejected' WHERE status = 'draft' AND created_at < ?",
+                (draft_cutoff,)
+            )
+            stale_draft_count = cursor.rowcount
+            # 3. 45 kundan oshgan arxiv postlarni tozalash
             await db.execute("DELETE FROM posts WHERE status = 'published' AND created_at < ?", (cutoff,))
             await db.commit()
-            # 3. Disk hajmini bo'shatish (VACUUM)
+            # 4. Disk hajmini bo'shatish (VACUUM)
             await db.execute("VACUUM")
             await db.commit()
     except Exception as e:
         print(f"[DB Cleanup Xatolik]: {e}")
+    return stale_draft_count
 
 async def get_feed_post_counts() -> Dict[str, int]:
     """Har bir RSS manbasidan bazaga kiritilgan xabarlar sonini olish"""
@@ -518,3 +596,203 @@ async def get_feed_post_counts() -> Dict[str, int]:
         async with db.execute("SELECT source_name, COUNT(*) as cnt FROM posts GROUP BY source_name") as cursor:
             rows = await cursor.fetchall()
             return {r[0]: r[1] for r in rows if r[0]}
+
+# ==================== SO'ROVNOMALAR (POLLS & QUIZZES) ====================
+
+async def create_poll(
+    question: str,
+    options: List[str],
+    poll_type: str = "regular",
+    correct_option_id: Optional[int] = None,
+    explanation: Optional[str] = None,
+    topic: Optional[str] = None,
+    status: str = "draft"
+) -> int:
+    """Yangi AI so'rovnoma yoki viktorinani bazaga saqlash"""
+    now_str = datetime.now(timezone.utc).isoformat()
+    options_json = json.dumps(options, ensure_ascii=False)
+    async with get_db() as db:
+        cursor = await db.execute("""
+            INSERT INTO polls (question, options_json, poll_type, correct_option_id, explanation, topic, status, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (question, options_json, poll_type, correct_option_id, explanation, topic, status, now_str))
+        await db.commit()
+        return cursor.lastrowid
+
+async def get_poll(poll_id: int) -> Optional[Dict[str, Any]]:
+    """So'rovnomani ID bo'yicha olish"""
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM polls WHERE id = ?", (poll_id,)) as cursor:
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            data = dict(row)
+            try:
+                data["options"] = json.loads(data.get("options_json", "[]"))
+            except Exception:
+                data["options"] = []
+            return data
+
+async def update_poll_data(
+    poll_id: int,
+    question: str,
+    options: List[str],
+    poll_type: str = "regular",
+    correct_option_id: Optional[int] = None,
+    explanation: Optional[str] = None
+):
+    """Mavjud so'rovnoma ma'lumotlarini yangilash (qayta generatsiya qilinganda)"""
+    options_json = json.dumps(options, ensure_ascii=False)
+    async with get_db() as db:
+        await db.execute("""
+            UPDATE polls
+            SET question = ?, options_json = ?, poll_type = ?, correct_option_id = ?, explanation = ?
+            WHERE id = ?
+        """, (question, options_json, poll_type, correct_option_id, explanation, poll_id))
+        await db.commit()
+
+async def set_poll_status(poll_id: int, status: str, published_at: Optional[str] = None):
+    """So'rovnoma holatini o'zgartirish (published / rejected)"""
+    async with get_db() as db:
+        if published_at:
+            await db.execute("UPDATE polls SET status = ?, published_at = ? WHERE id = ?", (status, published_at, poll_id))
+        else:
+            await db.execute("UPDATE polls SET status = ? WHERE id = ?", (status, poll_id))
+        await db.commit()
+
+# ==================== KENGAYTIRILGAN STATISTIKA (ANALYTICS) ====================
+
+async def get_detailed_statistics() -> Dict[str, Any]:
+    """
+    Admin uchun kengaytirilgan statistika:
+    - Foydalanuvchilar: jami, faol, bloklagan, bugun / 7 kun / 30 kun ichida qo'shilganlar
+    - Postlar: jami, chiqarilgan, navbatda, qoralama, bekor qilingan
+    - Davrlar kesimida: bugun, oxirgi 7 kun, oxirgi 30 kunda chiqarilgan postlar
+    - Manbalar reytingi: qaysi manbadan nechta post chiqqan va jami nechta olingan
+    - So'rovnomalar (Polls): jami va kanalga chiqarilganlar soni
+    """
+    now_t = datetime.now(config.TASHKENT_TZ)
+    today_start_t = now_t.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_iso = today_start_t.astimezone(timezone.utc).isoformat()
+    week_iso = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    month_iso = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+
+    result: Dict[str, Any] = {
+        "users_total": 0,
+        "users_active": 0,
+        "users_blocked": 0,
+        "users_today": 0,
+        "users_week": 0,
+        "users_month": 0,
+        "posts_total": 0,
+        "published_total": 0,
+        "scheduled_total": 0,
+        "draft_total": 0,
+        "rejected_total": 0,
+        "published_today": 0,
+        "published_week": 0,
+        "published_month": 0,
+        "polls_total": 0,
+        "polls_published": 0,
+        "top_sources": [],
+        "last_published": None
+    }
+
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+
+        # 1. Foydalanuvchilar statistikasi
+        async with db.execute("""
+            SELECT
+                COUNT(*) as total,
+                COALESCE(SUM(CASE WHEN is_active = 1 THEN 1 ELSE 0 END), 0) as active,
+                COALESCE(SUM(CASE WHEN is_active = 0 THEN 1 ELSE 0 END), 0) as blocked,
+                COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) as today,
+                COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) as week,
+                COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) as month
+            FROM users
+        """, (today_iso, week_iso, month_iso)) as cur:
+            u_row = await cur.fetchone()
+            if u_row:
+                result["users_total"] = int(u_row["total"] or 0)
+                result["users_active"] = int(u_row["active"] or 0)
+                result["users_blocked"] = int(u_row["blocked"] or 0)
+                result["users_today"] = int(u_row["today"] or 0)
+                result["users_week"] = int(u_row["week"] or 0)
+                result["users_month"] = int(u_row["month"] or 0)
+
+        # 2. Postlar status bo'yicha
+        async with db.execute("SELECT status, COUNT(*) as cnt FROM posts GROUP BY status") as cur:
+            for r in await cur.fetchall():
+                st = r["status"]
+                cnt = int(r["cnt"] or 0)
+                result["posts_total"] += cnt
+                if st == "published":
+                    result["published_total"] = cnt
+                elif st == "scheduled":
+                    result["scheduled_total"] = cnt
+                elif st == "draft":
+                    result["draft_total"] = cnt
+                elif st == "rejected":
+                    result["rejected_total"] = cnt
+
+        # 3. Chiqarilgan postlar vaqt kesimida (bugun, hafta, oy)
+        async with db.execute("""
+            SELECT
+                COALESCE(SUM(CASE WHEN published_at >= ? THEN 1 ELSE 0 END), 0) as pub_today,
+                COALESCE(SUM(CASE WHEN published_at >= ? THEN 1 ELSE 0 END), 0) as pub_week,
+                COALESCE(SUM(CASE WHEN published_at >= ? THEN 1 ELSE 0 END), 0) as pub_month
+            FROM posts
+            WHERE status = 'published' AND published_at IS NOT NULL
+        """, (today_iso, week_iso, month_iso)) as cur:
+            p_row = await cur.fetchone()
+            if p_row:
+                result["published_today"] = int(p_row["pub_today"] or 0)
+                result["published_week"] = int(p_row["pub_week"] or 0)
+                result["published_month"] = int(p_row["pub_month"] or 0)
+
+        # 4. Manbalar bo'yicha TOP-10 reyting (chiqarilgan va jami)
+        async with db.execute("""
+            SELECT
+                COALESCE(source_name, 'Noma''lum') as src,
+                COUNT(*) as total_cnt,
+                COALESCE(SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END), 0) as pub_cnt
+            FROM posts
+            GROUP BY src
+            ORDER BY pub_cnt DESC, total_cnt DESC
+            LIMIT 10
+        """) as cur:
+            result["top_sources"] = [
+                {"source": r["src"], "total": int(r["total_cnt"]), "published": int(r["pub_cnt"])}
+                for r in await cur.fetchall()
+            ]
+
+        # 5. So'rovnomalar (Polls) statistikasi
+        try:
+            async with db.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    COALESCE(SUM(CASE WHEN status = 'published' THEN 1 ELSE 0 END), 0) as pub
+                FROM polls
+            """) as cur:
+                pl_row = await cur.fetchone()
+                if pl_row:
+                    result["polls_total"] = int(pl_row["total"] or 0)
+                    result["polls_published"] = int(pl_row["pub"] or 0)
+        except Exception:
+            pass
+
+        # 6. Oxirgi chiqarilgan post
+        async with db.execute("""
+            SELECT id, title, source_name, published_at
+            FROM posts
+            WHERE status = 'published' AND published_at IS NOT NULL
+            ORDER BY published_at DESC LIMIT 1
+        """) as cur:
+            lp = await cur.fetchone()
+            if lp:
+                result["last_published"] = dict(lp)
+
+    return result
+

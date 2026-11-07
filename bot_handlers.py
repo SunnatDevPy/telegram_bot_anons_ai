@@ -7,7 +7,8 @@ from aiogram import Router, F, Bot
 from aiogram.types import (
     Message, CallbackQuery,
     InlineKeyboardMarkup, InlineKeyboardButton,
-    ReplyKeyboardMarkup, KeyboardButton, FSInputFile
+    ReplyKeyboardMarkup, KeyboardButton, FSInputFile,
+    InputPollOption
 )
 from aiogram.filters import Command
 from aiogram.exceptions import TelegramBadRequest
@@ -20,9 +21,10 @@ import rss_parser
 import ai_formatter
 from ai_formatter import (
     regenerate_news, safe_telegram_caption, answer_ai_assistant_question,
-    attach_source_link, strip_source_link, prepare_channel_caption, generate_daily_digest
+    attach_source_link, strip_source_link, prepare_channel_caption,
+    generate_daily_digest, generate_ai_poll
 )
-from media_helper import send_media_robust, send_user_preview_media
+from media_helper import send_media_robust, send_user_preview_media, get_or_create_cover_for_post
 from diagnostics import get_system_health, format_health_html
 
 router = Router()
@@ -40,6 +42,57 @@ user_ai_state = {}            # {user_id: True}
 
 # Admin Premium Emoji sozlash holati: {admin_id: "lightning"}
 admin_emoji_edit_state = {}
+
+# AI Maslahatchi uchun foydalanuvchi bo'yicha rate-limit: {user_id: [datetime, ...]}
+AI_RATE_LIMIT_WINDOW_SECONDS = 60
+AI_RATE_LIMIT_MAX_REQUESTS = 3
+_ai_request_history: Dict[int, List[datetime]] = {}
+
+def ai_rate_limit_remaining(user_id: int) -> int:
+    """
+    Foydalanuvchining oxirgi 60 soniyadagi AI so'rovlarini tekshiradi.
+    Limitdan oshmagan bo'lsa 0, aks holda kutish kerak bo'lgan soniyalar sonini qaytaradi.
+    Admin uchun limit qo'llanilmaydi.
+    """
+    now = datetime.now(timezone.utc)
+    history = _ai_request_history.get(user_id, [])
+    window_start = now - timedelta(seconds=AI_RATE_LIMIT_WINDOW_SECONDS)
+    history = [t for t in history if t >= window_start]
+    _ai_request_history[user_id] = history
+
+    if len(history) >= AI_RATE_LIMIT_MAX_REQUESTS:
+        oldest = history[0]
+        wait_seconds = int(AI_RATE_LIMIT_WINDOW_SECONDS - (now - oldest).total_seconds())
+        return max(1, wait_seconds)
+    history.append(now)
+    return 0
+
+async def enforce_ai_rate_limit(target, user_id: int) -> bool:
+    """
+    AI so'rovini limitga muvofiq bajarish. Limitga urilsa xabar yuborib True qaytaradi
+    (ya'ni so'rov BAJARILMASLIGI kerak). Limit ichida bo'lsa False qaytaradi.
+    `target` — Message yoki CallbackQuery bo'lishi mumkin. Admin limitga tushmaydi.
+    """
+    if await check_is_admin(user_id):
+        return False
+
+    wait_seconds = ai_rate_limit_remaining(user_id)
+    if wait_seconds <= 0:
+        return False
+
+    text = (
+        f"⏳ <b>Biroz sekinroq!</b>\n\n"
+        f"AI Maslahatchi yuklamasi cheklangan. Iltimos, <b>{wait_seconds} soniya</b> "
+        f"kutib, qaytadan urinib ko'ring."
+    )
+    try:
+        if isinstance(target, CallbackQuery):
+            await target.answer(f"⏳ Biroz kuting ({wait_seconds}s)", show_alert=True)
+        else:
+            await target.answer(text, parse_mode="HTML")
+    except Exception:
+        pass
+    return True
 
 EMOJI_METADATA = {
     "lightning": {"name": "Sarlavha (Chaqmoq)", "default": "⚡️"},
@@ -186,14 +239,18 @@ def get_admin_keyboard(
             InlineKeyboardButton(text=ai_btn_text, callback_data="toggle_ai_btn")
         ],
         [
-            InlineKeyboardButton(text=f"📡 RSS Manbalari ({len(config.RSS_SOURCES)} ta)", callback_data="admin_feeds_menu")
+            InlineKeyboardButton(text=f"📡 RSS Manbalari ({len(config.RSS_SOURCES)} ta)", callback_data="admin_feeds_menu"),
+            InlineKeyboardButton(text="📈 Statistika (/stats)", callback_data="view_detailed_stats")
         ],
         [
-            InlineKeyboardButton(text="📊 Holat (/status)", callback_data="view_bot_status"),
+            InlineKeyboardButton(text="📊 AI So'rovnoma (/poll)", callback_data="admin_poll_menu"),
+            InlineKeyboardButton(text="📰 Kechki Dayjest (/digest)", callback_data="admin_preview_digest")
+        ],
+        [
+            InlineKeyboardButton(text="🩺 Salomatlik (/status)", callback_data="view_bot_status"),
             InlineKeyboardButton(text="💾 Zaxira (/backup)", callback_data="admin_download_backup")
         ],
         [
-            InlineKeyboardButton(text="📰 Kechki Dayjest (/digest)", callback_data="admin_preview_digest"),
             InlineKeyboardButton(text="✨ Premium Emojilar", callback_data="admin_emojis_menu")
         ],
         [
@@ -341,7 +398,7 @@ async def get_channel_post_keyboard(
             # danger - Telegramda qizil rangli zamonaviy tugma hosil qiladi
             row1.append(InlineKeyboardButton(
                 text="🤖 AI muhokama",
-                url=f"https://t.me/{bot_user}?start=discuss_{post_id}",
+                url=f"{config.BOT_LINK}?start=discuss_{post_id}",
                 style="danger"
             ))
 
@@ -362,7 +419,7 @@ async def get_dayjest_keyboard() -> Optional[InlineKeyboardMarkup]:
     if bot_user:
         row.append(InlineKeyboardButton(
             text="🤖 AI bilan muhokama",
-            url=f"https://t.me/{bot_user}?start=digest"
+            url=f"{config.BOT_LINK}?start=digest"
         ))
 
     disc_link = getattr(config, "DISCUSSION_CHAT_LINK", "").strip()
@@ -413,10 +470,20 @@ def get_user_reply_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 async def check_is_admin(user_id: int) -> bool:
+    """
+    Foydalanuvchi admin ekanligini tekshirish.
+
+    DIQQAT: Agar bazada admin_id bo'lmasa, HECH KIM avtomatik admin bo'lib qolmaydi.
+    Faqat .env dagi INITIAL_ADMIN_ID ga mos keladigan foydalanuvchi admin sifatida
+    avtomatik tayinlanadi (bu faqat birinchi ishga tushirishda kerak bo'ladi).
+    """
     admin_id = await database.get_setting("admin_id")
     if not admin_id:
-        await database.set_setting("admin_id", str(user_id))
-        return True
+        initial_admin = getattr(config, "INITIAL_ADMIN_ID", None)
+        if initial_admin and int(user_id) == int(initial_admin):
+            await database.set_setting("admin_id", str(user_id))
+            return True
+        return False
     return str(user_id) == str(admin_id)
 
 async def format_panel_text() -> str:
@@ -678,6 +745,14 @@ async def create_post_from_url(url: str, admin_id: int, bot: Bot, status_msg: Op
 
         uz_caption = await ai_formatter.format_news(title, summary, source_name, category="IT & AI", original_url=clean_url)
 
+        # Agar sahifada rasm topilmagan bo'lsa, avtomatik HD Cover Banner yaratamiz
+        if not img_url:
+            img_url = get_or_create_cover_for_post(
+                title=title,
+                category="IT & AI",
+                source_name=source_name
+            )
+
         # Bazaga kiritish
         post_id = await database.create_post(
             url=clean_url,
@@ -742,6 +817,336 @@ async def cmd_admin(message: Message):
         return
     text, kb = await get_rendered_admin_panel()
     await message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.message(Command("help", "yordam"))
+async def cmd_help(message: Message):
+    """Barcha buyruqlar va qo'llanma"""
+    is_admin = await check_is_admin(message.from_user.id)
+
+    user_part = (
+        "📖 <b>NeuraTech AI — Yordam</b>\n\n"
+        "🟢 <b>Mavjud imkoniyatlar:</b>\n"
+        "• 🔥 <b>Top 10 ta AI Yangilik</b> — eng so'nggi xabarlar ro'yxati\n"
+        "• ⚡️ <b>Eng so'nggi yangilik</b> — oxirgi e'lon qilingan post\n"
+        "• 🔍 <b>Qidiruv</b> — mavzu yoki kalit so'z bo'yicha qidirish\n"
+        "• 💬 <b>AI Maslahatchi</b> — IT va AI bo'yicha savol-javob\n"
+        "• 📢 <b>Rasmiy Kanalimiz</b> — kanalga o'tish\n\n"
+        "💡 <i>Botga shunchaki savolingizni yozishingiz ham mumkin.</i>"
+    )
+
+    if not is_admin:
+        await message.answer(user_part, parse_mode="HTML")
+        return
+
+    admin_part = (
+        "\n\n👑 <b>Admin buyruqlari:</b>\n"
+        "/admin — boshqaruv paneli\n"
+        "/stats (<i>statistika</i>) — mijozlar, postlar va manbalar hisoboti\n"
+        "/poll [mavzu] — AI so'rovnoma yaratish\n"
+        "/quiz [mavzu] — AI viktorina (test) yaratish\n"
+        "/status — tizim salomatligi (0 token)\n"
+        "/queue (<i>navbat</i>) — rejalashtirilgan postlar\n"
+        "/clear_queue (<i>tozalash</i>) — navbatni tozalash\n"
+        "/emojis — Premium emoji boshqaruvi\n"
+        "/feeds — RSS manbalar boshqaruvi\n"
+        "/post &lt;url&gt; — havoladan post yaratish\n"
+        "/digest — kechki dayjestni sinash\n"
+        "/backup — bazani zaxiralash\n"
+        "/broadcast (<i>reklama</i>) — mijozlarga xabar yuborish\n"
+        "/cancel — joriy amalni bekor qilish"
+    )
+    await message.answer(user_part + admin_part, parse_mode="HTML")
+
+async def render_detailed_stats_html() -> str:
+    """Foydalanuvchilar, postlar, manbalar va so'rovnomalar bo'yicha to'liq statistika matni"""
+    st = await database.get_detailed_statistics()
+    now_t = datetime.now(config.TASHKENT_TZ).strftime("%d.%m.%Y %H:%M")
+
+    # Oxirgi chiqarilgan post vaqti
+    lp = st.get("last_published")
+    last_pub_str = "Hozircha yo'q"
+    if lp and lp.get("published_at"):
+        try:
+            dt = datetime.fromisoformat(lp["published_at"]).astimezone(config.TASHKENT_TZ)
+            last_pub_str = f"{dt.strftime('%d.%m %H:%M')} — <i>{html.escape(lp.get('title', '')[:42])}...</i>"
+        except Exception:
+            last_pub_str = str(lp.get("published_at"))[:16]
+
+    lines = [
+        "📈 <b>NeuraTech AI — Kengaytirilgan Statistika</b>",
+        f"🕒 <i>Yangilangan vaqti: {now_t} (Toshkent)</i>\n",
+        "👥 <b>FOYDALANUVCHILAR (OBUNACHILAR):</b>",
+        f"├ 🟢 Faol mijozlar: <b>{st['users_active']} ta</b>",
+        f"├ 🔴 Botni to'xtatganlar: <b>{st['users_blocked']} ta</b>",
+        f"├ 📊 Jami ro'yxatdan o'tgan: <b>{st['users_total']} ta</b>",
+        f"├ 📅 Bugun qo'shilgan: <b>+{st['users_today']} ta</b>",
+        f"├ 🗓 Oxirgi 7 kunda: <b>+{st['users_week']} ta</b>",
+        f"└ 📆 Oxirgi 30 kunda: <b>+{st['users_month']} ta</b>\n",
+        "📬 <b>POSTLAR VA KANAL FAOLLIGI:</b>",
+        f"├ 🚀 Kanalga jami chiqarilgan: <b>{st['published_total']} ta</b>",
+        f"├ 📅 Bugun chiqarilgan: <b>{st['published_today']} ta</b>",
+        f"├ 🗓 Oxirgi 7 kunda: <b>{st['published_week']} ta</b>",
+        f"├ 📆 Oxirgi 30 kunda: <b>{st['published_month']} ta</b>",
+        f"├ ⏳ Hozir navbatda (Scheduled): <b>{st['scheduled_total']} ta</b>",
+        f"├ 📝 Moderatsiyada (Draft): <b>{st['draft_total']} ta</b>",
+        f"├ ❌ Rad etilgan / eskirgan: <b>{st['rejected_total']} ta</b>",
+        f"└ 📦 Bazada jami qayta ishlangan: <b>{st['posts_total']} ta</b>\n",
+        "📊 <b>INTERAKTIV SO'ROVNOMALAR (POLLS):</b>",
+        f"└ 📢 Kanalga chiqarilgan: <b>{st['polls_published']} ta</b> (Jami: {st['polls_total']} ta)\n",
+        f"🕒 <b>Oxirgi post:</b> {last_pub_str}\n"
+    ]
+
+    top_sources = st.get("top_sources", [])
+    if top_sources:
+        lines.append("🏆 <b>TOP MANBALAR REYTINGI (Chiqarilgan / Jami):</b>")
+        medals = ["🥇", "🥈", "🥉"]
+        pub_sum = max(1, st["published_total"])
+        for idx, s in enumerate(top_sources[:8]):
+            icon = medals[idx] if idx < 3 else f"<b>{idx + 1}.</b>"
+            src_name = html.escape(s["source"])
+            pub_c = s["published"]
+            tot_c = s["total"]
+            pct = int(round((pub_c / pub_sum) * 100)) if st["published_total"] > 0 else 0
+            lines.append(f"{icon} {src_name}: <b>{pub_c} ta</b> ({pct}%) <i>[jami: {tot_c}]</i>")
+
+    return "\n".join(lines)
+
+def get_detailed_stats_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 Yangilash", callback_data="refresh_detailed_stats"),
+            InlineKeyboardButton(text="🩺 Tizim salomatligi", callback_data="view_bot_status")
+        ],
+        [
+            InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")
+        ]
+    ])
+
+@router.message(Command("stats", "statistika", "analytics"))
+async def cmd_stats(message: Message):
+    if not await check_is_admin(message.from_user.id):
+        await message.reply("Kechirasiz, ushbu buyruq faqat bot ma'muri uchun.")
+        return
+    text = await render_detailed_stats_html()
+    await message.answer(text, parse_mode="HTML", reply_markup=get_detailed_stats_keyboard())
+
+@router.callback_query(F.data.in_({"view_detailed_stats", "refresh_detailed_stats"}))
+async def cb_detailed_stats(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+    text = await render_detailed_stats_html()
+    kb = get_detailed_stats_keyboard()
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await call.answer("Statistika yangilandi ✅" if call.data == "refresh_detailed_stats" else "")
+
+# ==================== INTERAKTIV AI SO'ROVNOMA VA VIKTORINA (POLL / QUIZ) ====================
+
+def get_poll_preview_keyboard(poll_id: int, poll_type: str = "regular") -> InlineKeyboardMarkup:
+    alt_type = "quiz" if poll_type == "regular" else "regular"
+    alt_label = "🎯 Viktorinaga (Quiz) aylantirish" if poll_type == "regular" else "📊 Oddiy so'rovnomaga aylantirish"
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🟢 📢 Kanalga chiqarish", callback_data=f"pub_poll:{poll_id}")],
+        [
+            InlineKeyboardButton(text="🔄 Boshqa savol", callback_data=f"regen_poll:{poll_id}:{poll_type}"),
+            InlineKeyboardButton(text=alt_label, callback_data=f"regen_poll:{poll_id}:{alt_type}")
+        ],
+        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data=f"del_poll:{poll_id}")]
+    ])
+
+async def generate_and_send_poll_preview(
+    bot: Bot,
+    admin_id: int,
+    topic: Optional[str] = None,
+    poll_type: str = "regular"
+):
+    """AI yordamida so'rovnoma yaratib, adminga jonli Telegram Poll ko'rinishida yuborish"""
+    recent_posts = await database.get_top_news(limit=5)
+    poll_data = await generate_ai_poll(topic=topic, recent_posts=recent_posts, poll_type=poll_type)
+
+    poll_id = await database.create_poll(
+        question=poll_data["question"],
+        options=poll_data["options"],
+        poll_type=poll_data["poll_type"],
+        correct_option_id=poll_data.get("correct_option_id"),
+        explanation=poll_data.get("explanation"),
+        topic=topic
+    )
+
+    options_objs = [InputPollOption(text=o[:100]) for o in poll_data["options"][:4]]
+    is_quiz = poll_data["poll_type"] == "quiz"
+
+    # 1. Adminga haqiqiy Telegram Poll namunasini ko'rsatish
+    await bot.send_poll(
+        chat_id=admin_id,
+        question=poll_data["question"][:255],
+        options=options_objs,
+        is_anonymous=True,
+        type="quiz" if is_quiz else "regular",
+        correct_option_id=poll_data.get("correct_option_id") if is_quiz else None,
+        explanation=poll_data.get("explanation") if is_quiz else None
+    )
+
+    # 2. Boshqaruv kartochkasi
+    type_badge = "🎯 <b>Viktorina (Quiz — to'g'ri javobli)</b>" if is_quiz else "📊 <b>Ijtimoiy So'rovnoma (Fikr bilish)</b>"
+    topic_line = f"📌 <b>Mavzu:</b> <i>{html.escape(topic)}</i>\n" if topic else "📌 <b>Mavzu:</b> <i>Oxirgi IT & AI trendlari asosida</i>\n"
+    ctrl_text = (
+        f"👆 <b>Yuqoridagi so'rovnoma PREVIEW ko'rinishi (Post #{poll_id})</b>\n\n"
+        f"🏷 <b>Turi:</b> {type_badge}\n"
+        f"{topic_line}\n"
+        "Tasdiqlasangiz, u to'g'ridan-to'g'ri rasmiy kanalingizga joylanadi:"
+    )
+    await bot.send_message(
+        chat_id=admin_id,
+        text=ctrl_text,
+        parse_mode="HTML",
+        reply_markup=get_poll_preview_keyboard(poll_id, poll_data["poll_type"])
+    )
+
+@router.message(Command("poll", "quiz", "sorovnoma"))
+async def cmd_poll(message: Message, bot: Bot):
+    if not await check_is_admin(message.from_user.id):
+        await message.reply("Kechirasiz, ushbu buyruq faqat bot ma'muri uchun.")
+        return
+
+    cmd_parts = (message.text or "").split(maxsplit=1)
+    cmd_name = cmd_parts[0].lstrip("/").split("@")[0].lower()
+    topic = cmd_parts[1].strip() if len(cmd_parts) > 1 else None
+    poll_type = "quiz" if cmd_name == "quiz" else "regular"
+
+    wait_msg = await message.answer("🧠 <i>Gemini AI kanal uchun interaktiv so'rovnoma tayyorlamoqda...</i>", parse_mode="HTML")
+    try:
+        await generate_and_send_poll_preview(bot=bot, admin_id=message.from_user.id, topic=topic, poll_type=poll_type)
+    finally:
+        try:
+            await wait_msg.delete()
+        except Exception:
+            pass
+
+@router.callback_query(F.data == "admin_poll_menu")
+async def cb_admin_poll_menu(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    text = (
+        "📊 <b>NeuraTech AI — Interaktiv So'rovnoma va Viktorinalar</b>\n\n"
+        "Kanal obunachilarining faolligini (Engagement) oshirish uchun AI yordamida eng so'nggi yangiliklar asosida "
+        "so'rovnoma yoki viktorina (test) yaratishingiz mumkin.\n\n"
+        "💡 <b>Maxsus mavzu bo'yicha yaratish uchun:</b>\n"
+        "• <code>/poll ChatGPT va Gemini</code> — fikr so'rovnoma\n"
+        "• <code>/quiz NVIDIA chiplari</code> — to'g'ri javobli viktorina\n\n"
+        "Yoki hoziroq avtomatik generatsiya qilish uchun quyidagi tugmalardan birini bosing:"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📊 Oddiy So'rovnoma (Poll)", callback_data="create_ai_poll:regular"),
+            InlineKeyboardButton(text="🎯 Viktorina (Quiz)", callback_data="create_ai_poll:quiz")
+        ],
+        [InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")]
+    ])
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await call.answer()
+
+@router.callback_query(F.data.startswith("create_ai_poll:"))
+async def cb_create_ai_poll(call: CallbackQuery, bot: Bot):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    poll_type = call.data.split(":")[1]
+    await call.answer("AI so'rovnoma tayyorlanmoqda... ⏳")
+    wait_msg = await call.message.answer("🧠 <i>Gemini AI so'rovnoma tuzmoqda...</i>", parse_mode="HTML")
+    try:
+        await generate_and_send_poll_preview(bot=bot, admin_id=call.from_user.id, topic=None, poll_type=poll_type)
+    finally:
+        try:
+            await wait_msg.delete()
+        except Exception:
+            pass
+
+@router.callback_query(F.data.startswith("regen_poll:"))
+async def cb_regen_poll(call: CallbackQuery, bot: Bot):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    parts = call.data.split(":")
+    poll_id = int(parts[1])
+    new_type = parts[2] if len(parts) > 2 else "regular"
+
+    old_poll = await database.get_poll(poll_id)
+    topic = old_poll.get("topic") if old_poll else None
+
+    await call.answer("Yangi variant tayyorlanmoqda... 🔄")
+    try:
+        await call.message.delete()
+    except Exception:
+        pass
+    await generate_and_send_poll_preview(bot=bot, admin_id=call.from_user.id, topic=topic, poll_type=new_type)
+
+@router.callback_query(F.data.startswith("pub_poll:"))
+async def cb_publish_poll(call: CallbackQuery, bot: Bot):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    poll_id = int(call.data.split(":")[1])
+    poll_data = await database.get_poll(poll_id)
+    if not poll_data or poll_data.get("status") == "published":
+        await call.answer("So'rovnoma topilmadi yoki allaqachon chiqarilgan!", show_alert=True)
+        return
+
+    options_objs = [InputPollOption(text=o[:100]) for o in poll_data["options"][:4]]
+    is_quiz = poll_data.get("poll_type") == "quiz"
+
+    try:
+        await bot.send_poll(
+            chat_id=config.CHANNEL_ID,
+            question=poll_data["question"][:255],
+            options=options_objs,
+            is_anonymous=True,
+            type="quiz" if is_quiz else "regular",
+            correct_option_id=poll_data.get("correct_option_id") if is_quiz else None,
+            explanation=poll_data.get("explanation") if is_quiz else None
+        )
+        now_str = datetime.now(timezone.utc).isoformat()
+        await database.set_poll_status(poll_id, "published", published_at=now_str)
+        await call.answer("So'rovnoma kanalga chiqarildi! 🚀", show_alert=False)
+        await call.message.edit_text(
+            f"✅ <b>So'rovnoma #{poll_id} rasmiy kanalga ({config.CHANNEL_USERNAME}) muvaffaqiyatli joylandi!</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="📊 Yana so'rovnoma yaratish", callback_data="admin_poll_menu")],
+                [InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")]
+            ])
+        )
+    except Exception as e:
+        await call.answer("Xatolik yuz berdi!", show_alert=True)
+        await call.message.answer(
+            f"❌ <b>So'rovnomani kanalga chiqarishda xatolik:</b>\n<code>{html.escape(str(e))}</code>",
+            parse_mode="HTML"
+        )
+
+@router.callback_query(F.data.startswith("del_poll:"))
+async def cb_delete_poll(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    poll_id = int(call.data.split(":")[1])
+    await database.set_poll_status(poll_id, "rejected")
+    await call.answer("So'rovnoma bekor qilindi ❌")
+    try:
+        await call.message.edit_text("❌ <b>So'rovnoma bekor qilindi.</b>", parse_mode="HTML", reply_markup=None)
+    except Exception:
+        pass
 
 @router.message(Command("status", "health"))
 async def cmd_status(message: Message, bot: Bot):
@@ -941,6 +1346,8 @@ async def cmd_user_ai_assistant(message: Message):
 @router.callback_query(F.data.startswith("ai_ask_inline:"))
 async def cb_ai_ask_inline(call: CallbackQuery):
     await database.register_user(call.from_user.id, call.from_user.username, call.from_user.first_name, call.from_user.last_name)
+    if await enforce_ai_rate_limit(call, call.from_user.id):
+        return
     query = call.data.split(":", 1)[1]
     await call.answer("NeuraTech AI javob tayyorlamoqda... ⏳")
     wait_msg = await call.message.answer(f"🧠 <i>'{query}' bo'yicha NeuraTech AI tahlil qilmoqda...</i>", parse_mode="HTML")
@@ -1046,17 +1453,12 @@ async def cb_user_refresh_top(call: CallbackQuery):
 
 @router.callback_query(F.data == "view_user_menu")
 async def cb_view_user_menu(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
     digest_text, kb = await render_top_10_digest(is_admin=True)
     await call.message.edit_text(digest_text, parse_mode="HTML", reply_markup=kb)
     await call.answer("Mijozlar ko'rinishi ochildi")
-
-@router.callback_query(F.data == "view_admin_panel")
-async def cb_view_admin_panel(call: CallbackQuery):
-    text = await format_panel_text()
-    mode = await database.get_setting("mode", "moderation")
-    interval = int(await database.get_setting("interval_minutes", "25"))
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=get_admin_keyboard(mode, interval))
-    await call.answer("Admin panelga qaytildi")
 
 # ==================== ADMIN REKLAMA (BROADCAST) TIZIMI ====================
 
@@ -1435,14 +1837,14 @@ async def cb_q_publish(call: CallbackQuery, bot: Bot):
         return
 
     now_str = datetime.now(timezone.utc).isoformat()
-    await database.set_post_status(post_id, "published", published_at=now_str)
-
     try:
         from scheduler import send_to_channel
         source_btn_active = (await database.get_setting("channel_source_btn", "1") == "1")
         channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"), source_name=post.get("source_name"))
         cap_to_send = prepare_channel_caption(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""), source_btn_active=source_btn_active)
         await send_to_channel(bot, post["image_url"], cap_to_send, reply_markup=channel_kb)
+        # Faqat yuborish muvaffaqiyatli bo'lgandan keyin "published" qilamiz
+        await database.set_post_status(post_id, "published", published_at=now_str)
         await call.answer("Post kanalga muvaffaqiyatli chiqarildi! 🚀", show_alert=False)
     except Exception as e:
         await call.answer(f"Xatolik: {e}", show_alert=True)
@@ -1492,7 +1894,6 @@ async def cb_queue_pub_first(call: CallbackQuery, bot: Bot):
 
     post = posts[0]
     now_str = datetime.now(timezone.utc).isoformat()
-    await database.set_post_status(post["id"], "published", published_at=now_str)
 
     try:
         from scheduler import send_to_channel
@@ -1500,6 +1901,8 @@ async def cb_queue_pub_first(call: CallbackQuery, bot: Bot):
         channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"), source_name=post.get("source_name"))
         cap_to_send = prepare_channel_caption(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""), source_btn_active=source_btn_active)
         await send_to_channel(bot, post["image_url"], cap_to_send, reply_markup=channel_kb)
+        # Faqat muvaffaqiyatli yuborilgandan keyin holat yangilanadi
+        await database.set_post_status(post["id"], "published", published_at=now_str)
         await call.answer(f"«{post['title'][:30]}...» kanalga chiqarildi! 🚀", show_alert=False)
     except Exception as e:
         await call.answer(f"Xatolik: {e}", show_alert=True)
@@ -2046,10 +2449,14 @@ async def handle_incoming_messages(message: Message, bot: Bot):
             await message.answer("⚠️ Post bazada topilmadi yoki allaqachon kanalga chiqarilgan.")
             return
 
-        # Yangi rasm yuborilgan bo'lsa
+        # Yangi rasm, video yoki GIF yuborilgan bo'lsa
         new_image_url = None
         if message.photo:
             new_image_url = message.photo[-1].file_id
+        elif message.video:
+            new_image_url = f"tg_video:{message.video.file_id}"
+        elif message.animation:
+            new_image_url = f"tg_anim:{message.animation.file_id}"
 
         # Matn va entitiylarni aniqlash
         formatting_entity_types = {
@@ -2111,13 +2518,20 @@ async def handle_incoming_messages(message: Message, bot: Bot):
         # Telegram HTML parse qila olishini tekshirish
         try:
             if has_image:
-                await bot.send_photo(
+                sent_ok = await send_media_robust(
+                    bot=bot,
                     chat_id=admin_id,
-                    photo=effective_image,
+                    media_url=effective_image,
                     caption=safe_telegram_caption(full_preview_text, max_len=1024),
-                    parse_mode="HTML",
                     reply_markup=preview_kb
                 )
+                if not sent_ok:
+                    await bot.send_message(
+                        chat_id=admin_id,
+                        text=safe_telegram_caption(full_preview_text, max_len=4096),
+                        parse_mode="HTML",
+                        reply_markup=preview_kb
+                    )
             else:
                 await bot.send_message(
                     chat_id=admin_id,
@@ -2326,6 +2740,9 @@ async def handle_incoming_messages(message: Message, bot: Bot):
         if not query:
             await message.answer("Iltimos, savolingizni matn ko'rinishida yozing.")
             return
+        if await enforce_ai_rate_limit(message, message.from_user.id):
+            # Limitga urilganda AI holati saqlanib qoladi, foydalanuvchi birozdan so'ng davom ettira oladi
+            return
 
         article_context = None
         article_title = ""
@@ -2391,6 +2808,8 @@ async def handle_incoming_messages(message: Message, bot: Bot):
 
         # Agar qidiruvdan chiqmasa va savolga o'xshasa (yoki 8+ belgi bo'lsa)
         if "?" in query or len(query) >= 8:
+            if await enforce_ai_rate_limit(message, message.from_user.id):
+                return
             wait_msg = await message.answer("🧠 <i>NeuraTech AI tahlil qilmoqda...</i>", parse_mode="HTML")
             answer = await answer_ai_assistant_question(query)
             try:

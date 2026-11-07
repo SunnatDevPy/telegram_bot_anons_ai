@@ -118,21 +118,34 @@ def extract_image_from_entry(entry: Any) -> Optional[str]:
         html_sources.append(entry.summary)
 
     for html_text in html_sources:
-        # Video teglari
-        vid_match = re.search(r'<(?:video|source)[^>]+src=["\'](https?://[^"\']+\.(?:mp4|webm|mov))["\']', html_text, re.IGNORECASE)
+        # Video teglari (<video src="...">, <source src="...">, data-src="...")
+        vid_match = re.search(
+            r'<(?:video|source)[^>]+(?:src|data-src)=["\'](https?://[^"\']+\.(?:mp4|webm|mov|m4v)(?:\?[^"\']*)?)["\']',
+            html_text,
+            re.IGNORECASE
+        )
         if vid_match and not is_junk_or_emoji_url(vid_match.group(1)):
-            return vid_match.group(1)
+            return vid_match.group(1).replace("&amp;", "&")
+
+        # Matn yoki atribut ichidagi to'g'ridan-to'g'ri .mp4 / .webm havolalari
+        direct_vid = re.search(
+            r'["\'](https?://[^"\'<>\\\s]+\.(?:mp4|webm|mov)(?:\?[^"\'<>\\\s]*)?)["\']',
+            html_text,
+            re.IGNORECASE
+        )
+        if direct_vid and not is_junk_or_emoji_url(direct_vid.group(1)):
+            return direct_vid.group(1).replace("&amp;", "&")
 
         # GIF animatsiyalar
-        for gif_m in re.finditer(r'<img[^>]+src=["\'](https?://[^"\']+\.gif)["\']', html_text, re.IGNORECASE):
-            g_url = gif_m.group(1)
+        for gif_m in re.finditer(r'<img[^>]+src=["\'](https?://[^"\']+\.gif(?:\?[^"\']*)?)["\']', html_text, re.IGNORECASE):
+            g_url = gif_m.group(1).replace("&amp;", "&")
             if not is_junk_or_emoji_url(g_url):
                 return g_url
 
         # Sifatli statik rasmlar (emojilar, smileylar va ikonkalar qat'iy chetlab o'tiladi)
         for img_match in re.finditer(r'<img\s+([^>]*?)src=["\'](https?://[^"\']+)["\']([^>]*)>', html_text, re.IGNORECASE):
             attrs = (img_match.group(1) + " " + img_match.group(3)).lower()
-            img_url = img_match.group(2)
+            img_url = img_match.group(2).replace("&amp;", "&")
             if any(k in attrs for k in ["wp-smiley", "emoji", "avatar", "icon"]):
                 continue
             if not is_junk_or_emoji_url(img_url) and not is_low_res_url(img_url):
@@ -140,30 +153,171 @@ def extract_image_from_entry(entry: Any) -> Optional[str]:
 
     return None
 
+def extract_video_from_html(html_text: str) -> Optional[str]:
+    """Veb-sahifa HTML kodidan to'g'ridan-to'g'ri video (.mp4, .webm, .mov) yoki og:video manzilini qidirish"""
+    if not html_text:
+        return None
+
+    # 1. Meta teglar: og:video, og:video:secure_url, og:video:url, twitter:player:stream
+    meta_video_patterns = [
+        r'<meta\s+[^>]*?(?:property|name)=["\'](?:og:video(?::secure_url|:url)?|twitter:player:stream)["\'][^>]*?content=["\'](https?://[^"\']+)["\']',
+        r'<meta\s+[^>]*?content=["\'](https?://[^"\']+)["\'][^>]*?(?:property|name)=["\'](?:og:video(?::secure_url|:url)?|twitter:player:stream)["\']',
+    ]
+    for pat in meta_video_patterns:
+        for m in re.finditer(pat, html_text, re.IGNORECASE):
+            v_url = m.group(1).replace("&amp;", "&").strip()
+            # YouTube/Vimeo iframe player sahifalarini emas, haqiqiy video oqimlarini olamiz
+            if is_video_or_gif_url(v_url) and not is_junk_or_emoji_url(v_url):
+                return v_url
+
+    # 2. <video> va <source> teglari
+    for m in re.finditer(
+        r'<(?:video|source)[^>]+(?:src|data-src)=["\'](https?://[^"\']+\.(?:mp4|webm|mov|m4v)(?:\?[^"\']*)?)["\']',
+        html_text,
+        re.IGNORECASE
+    ):
+        v_url = m.group(1).replace("&amp;", "&").strip()
+        if not is_junk_or_emoji_url(v_url):
+            return v_url
+
+    # 3. JSON-LD contentUrl yoki sahifa ichidagi to'g'ridan-to'g'ri .mp4 video
+    for m in re.finditer(
+        r'["\'](?:contentUrl|videoUrl|video_url|streamUrl)["\']\s*:\s*["\'](https?://[^"\'<>\\\s]+\.(?:mp4|webm|mov)(?:\?[^"\'<>\\\s]*)?)["\']',
+        html_text,
+        re.IGNORECASE
+    ):
+        v_url = m.group(1).replace("\\/", "/").replace("&amp;", "&").strip()
+        if not is_junk_or_emoji_url(v_url):
+            return v_url
+
+    return None
+
+def extract_paragraphs_from_html(html_text: str, max_chars: int = 2500) -> str:
+    """Maqola sahifasidan asosiy matn paragraflarini (<p>) toza holda ajratib olish (boyitilgan tarjima uchun)"""
+    if not html_text:
+        return ""
+
+    # Script, style, nav, footer, header qismlarini olib tashlash
+    cleaned_body = re.sub(r'<(?:script|style|nav|footer|header|aside|noscript)[^>]*>.*?</(?:script|style|nav|footer|header|aside|noscript)>', ' ', html_text, flags=re.IGNORECASE | re.DOTALL)
+
+    desc = ""
+    for d_pat in [
+        r'<meta\s+[^>]*?(?:property|name)=["\'](?:og:description|description)["\'][^>]*?content=["\']([^"\']+)["\']',
+        r'<meta\s+[^>]*?content=["\']([^"\']+)["\'][^>]*?(?:property|name)=["\'](?:og:description|description)["\']',
+    ]:
+        dm = re.search(d_pat, cleaned_body, re.IGNORECASE)
+        if dm:
+            desc = clean_html(dm.group(1))
+            break
+
+    junk_phrases = [
+        "cookie", "subscribe", "newsletter", "privacy policy", "terms of service",
+        "all rights reserved", "sign up for", "read more:", "related articles",
+        "advertisement", "sponsored", "affiliate commission", "follow us on"
+    ]
+
+    paragraphs = re.findall(r'<p[^>]*>(.*?)</p>', cleaned_body, re.IGNORECASE | re.DOTALL)
+    collected = []
+    if desc and len(desc) > 35:
+        collected.append(desc)
+
+    total_len = len(desc)
+    for p in paragraphs:
+        cp = clean_html(p)
+        if len(cp) < 45:
+            continue
+        cp_low = cp.lower()
+        if any(jp in cp_low for jp in junk_phrases):
+            continue
+        if cp not in collected:
+            collected.append(cp)
+            total_len += len(cp)
+            if total_len >= max_chars or len(collected) >= 8:
+                break
+
+    return "\n\n".join(collected)[:max_chars].strip()
+
 async def extract_og_image(url: str, client: httpx.AsyncClient) -> Optional[str]:
-    """RSS media bermagan taqdirda, maqola sahifasidan og:video, og:image yoki twitter:image olish"""
+    """Maqola sahifasidan 1-navbatda VIDEO (og:video / <video>), topilmasa Full HD og:image olish"""
     try:
-        resp = await client.get(url, timeout=9.0, follow_redirects=True)
+        resp = await client.get(url, timeout=10.0, follow_redirects=True)
         if resp.status_code == 200:
-            # 1. Avval og:video ni tekshirish
-            v_match = re.search(r'<meta\s+property=["\']og:video(?::secure_url)?["\']\s+content=["\'](https?://[^"\']+)["\']', resp.text, re.IGNORECASE)
-            if v_match:
-                return v_match.group(1).replace("&amp;", "&")
+            # 1. Avval sahifada video bormi tekshiramiz (videoli xabarlar ustuvor!)
+            vid_url = extract_video_from_html(resp.text)
+            if vid_url:
+                return vid_url
 
             # 2. Keyin og:image yoki twitter:image
             for pattern in [
-                r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']',
-                r'<meta\s+content=["\']([^"\']+)["\']\s+property=["\']og:image["\']',
-                r'<meta\s+name=["\']twitter:image["\']\s+content=["\']([^"\']+)["\']'
+                r'<meta\s+[^>]*?property=["\']og:image["\'][^>]*?content=["\']([^"\']+)["\']',
+                r'<meta\s+[^>]*?content=["\']([^"\']+)["\'][^>]*?property=["\']og:image["\']',
+                r'<meta\s+[^>]*?name=["\']twitter:image["\'][^>]*?content=["\']([^"\']+)["\']',
+                r'<meta\s+[^>]*?content=["\']([^"\']+)["\'][^>]*?name=["\']twitter:image["\']'
             ]:
                 m = re.search(pattern, resp.text, re.IGNORECASE)
                 if m:
-                    cand = m.group(1).replace("&amp;", "&")
+                    cand = m.group(1).replace("&amp;", "&").strip()
                     if not is_junk_or_emoji_url(cand) and not is_low_res_url(cand):
                         return cand
     except Exception:
         pass
     return None
+
+async def enrich_entry_from_webpage(
+    url: str,
+    client: httpx.AsyncClient,
+    current_summary: str,
+    current_media: Optional[str]
+) -> tuple[str, Optional[str]]:
+    """
+    Maqola veb-sahifasiga kirib:
+    1) Agar sahifada VIDEO (.mp4/.webm/.mov) bo'lsa, uni oladi (hatto RSS statik rasm bergan bo'lsa ham!).
+    2) Agar RSS rasm bermagan bo'lsa, Full HD og:image oladi.
+    3) Agar RSS matni (summary) qisqa bo'lsa (< 900 belgi), sahifadagi to'liq paragraflarni qo'shib boyitadi!
+    """
+    new_summary = current_summary or ""
+    new_media = current_media
+
+    try:
+        resp = await client.get(url, timeout=10.0, follow_redirects=True)
+        if resp.status_code != 200 or not resp.text:
+            return new_summary, new_media
+
+        html_text = resp.text
+
+        # 1. Har doim sahifadan VIDEO qidirib ko'ramiz (agar joriy media allaqachon video bo'lmasa)
+        if not is_video_or_gif_url(new_media):
+            page_video = extract_video_from_html(html_text)
+            if page_video:
+                new_media = page_video
+
+        # 2. Agar hali ham media yo'q yoki past sifatli bo'lsa, og:image olamiz
+        if not new_media or (not is_video_or_gif_url(new_media) and (is_low_res_url(new_media) or is_junk_or_emoji_url(new_media))):
+            for pattern in [
+                r'<meta\s+[^>]*?property=["\']og:image["\'][^>]*?content=["\']([^"\']+)["\']',
+                r'<meta\s+[^>]*?content=["\']([^"\']+)["\'][^>]*?property=["\']og:image["\']',
+                r'<meta\s+[^>]*?name=["\']twitter:image["\'][^>]*?content=["\']([^"\']+)["\']',
+                r'<meta\s+[^>]*?content=["\']([^"\']+)["\'][^>]*?name=["\']twitter:image["\']'
+            ]:
+                m = re.search(pattern, html_text, re.IGNORECASE)
+                if m:
+                    cand = m.group(1).replace("&amp;", "&").strip()
+                    if not is_junk_or_emoji_url(cand) and not is_low_res_url(cand):
+                        new_media = cand
+                        break
+
+        # 3. Maqola matnini boyitish (AI chala yoki mavhum tarjima qilmasligi uchun to'liq faktlarni yig'ish)
+        if len(new_summary) < 900:
+            rich_text = extract_paragraphs_from_html(html_text, max_chars=2500)
+            if len(rich_text) > len(new_summary):
+                if new_summary and new_summary[:80] not in rich_text:
+                    new_summary = f"{new_summary}\n\n{rich_text}"[:2500]
+                else:
+                    new_summary = rich_text[:2500]
+    except Exception:
+        pass
+
+    return new_summary, new_media
 
 def upgrade_image_url(url: Optional[str]) -> Optional[str]:
     """Kichik pikselli yoki past sifatli thumbnail rasmlarni original Full HD sifatiga ko'tarish"""
@@ -314,8 +468,8 @@ async def fetch_feed_entries(source: Dict[str, str], client: httpx.AsyncClient, 
             if not raw_summary:
                 raw_summary = getattr(entry, "summary", "") or ""
             summary = clean_html(raw_summary)
-            if len(summary) > 1200:
-                summary = summary[:1200]
+            if len(summary) > 2500:
+                summary = summary[:2500]
 
             # Do'kon chegirmalari, aksiyalar va savdo reklamalarini chetlab o'tish
             if is_commercial_deal(clean_title, link, summary):
@@ -329,16 +483,18 @@ async def fetch_feed_entries(source: Dict[str, str], client: httpx.AsyncClient, 
             if await is_duplicate_news(link, clean_title):
                 continue
 
-            # Rasm yoki video topish (Eng sifatli HD media tanlash)
+            # Rasm yoki video topish (Eng sifatli HD media va Video tanlash)
             img_url = extract_image_from_entry(entry)
-            is_video = is_video_or_gif_url(img_url)
 
-            # Agar rasm video bo'lmasa va (topilmagan, past sifatli yoki emoji bo'lsa),
-            # sahifaning asl OpenGraph (Full HD banner yoki og:video) mediasini olamiz
-            if not is_video and (not img_url or is_low_res_url(img_url) or is_junk_or_emoji_url(img_url)):
-                og_media = await extract_og_image(link, client)
-                if og_media:
-                    img_url = og_media
+            # Maqola sahifasiga kirib:
+            # 1) Agar sahifada VIDEO (.mp4/.webm/.mov) bo'lsa uni ustuvor olish,
+            # 2) Agar RSS matni qisqa bo'lsa (< 900 belgi), sahifadagi to'liq paragraflarni qo'shib boyitish!
+            summary, img_url = await enrich_entry_from_webpage(
+                url=link,
+                client=client,
+                current_summary=summary,
+                current_media=img_url
+            )
 
             img_url = upgrade_image_url(img_url)
 
@@ -348,6 +504,9 @@ async def fetch_feed_entries(source: Dict[str, str], client: httpx.AsyncClient, 
                     img_url = None
 
             priority = get_topic_priority(clean_title, summary, source.get("category", ""))
+            # Videoli yangiliklarga qo'shimcha ustuvorlik (+25 ball) beramiz
+            if is_video_or_gif_url(img_url):
+                priority += 25
             results.append({
                 "source_name": source["name"],
                 "category": source.get("category", "IT & AI"),

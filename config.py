@@ -77,7 +77,30 @@ DAILY_DIGEST_HOUR = 21
 BACKUP_HOUR = int(os.getenv("BACKUP_HOUR", "3"))
 
 LOGO_PATH = BASE_DIR / "neuratech_logo.jpg"
-DB_PATH = BASE_DIR / "bot_data.db"
+
+# Ma'lumotlar bazasi alohida 'data' papkasida saqlanadi.
+# Sababi: WAL rejimida SQLite baza yonida -wal va -shm fayllarini ham yaratadi,
+# shuning uchun Docker'da faqat bitta faylni emas, butun papkani ulash kerak.
+DATA_DIR = BASE_DIR / "data"
+
+def _prepare_data_dir():
+    """Ma'lumotlar papkasini yaratish va eski joylashuvdagi bazani ko'chirish."""
+    import shutil
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    legacy_db = BASE_DIR / "bot_data.db"
+    new_db = DATA_DIR / "bot_data.db"
+    if legacy_db.exists() and not new_db.exists():
+        try:
+            # WAL yon fayllari bilan birga ko'chirish
+            for suffix in ("", "-wal", "-shm"):
+                src = BASE_DIR / f"bot_data.db{suffix}"
+                if src.exists():
+                    shutil.move(str(src), str(DATA_DIR / f"bot_data.db{suffix}"))
+        except Exception:
+            pass
+
+_prepare_data_dir()
+DB_PATH = DATA_DIR / "bot_data.db"
 
 # Telegram Premium Custom Emoji ID lari
 PREMIUM_EMOJIS = {

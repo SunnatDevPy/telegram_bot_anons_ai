@@ -6,7 +6,12 @@ services:
     env_file:
       - .env
     volumes:
-      - .:/app
+      # Faqat ishlash uchun zarur bo'lgan fayl/papkalar ulanadi — butun loyiha
+      # papkasini (shu jumladan .git, .env, kodning o'zi) konteynerga yozish
+      # huquqi bilan ulash xavfsizlik nuqtai nazaridan noto'g'ri.
+      # 'data' papkasi WAL fayllari (-wal, -shm) bilan birga butunligicha ulanadi.
+      - ./data:/app/data
+      - ./assets:/app/assets
     logging:
       driver: "json-file"
       options:

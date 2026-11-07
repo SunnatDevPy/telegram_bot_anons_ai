@@ -558,29 +558,32 @@ def prepare_channel_caption(text: str, source_name: str = "", original_url: str 
 
 
 async def fallback_formatter(title: str, summary: str, source_name: str, original_url: str = "") -> str:
-    """Gemini ishlamagan taqdirda o'zbekcha tarjima qilib, ochiluvchi sitata (blockquote expandable) bilan xavfsiz formatlash"""
+    """Gemini ishlamagan taqdirda o'zbekcha tarjima qilib, ochiluvchi sitata (blockquote expandable) bilan boyitilgan formatlash"""
     clean_title = clean_ugly_symbols(title)
-    clean_sum = clean_ugly_symbols(summary)
+    clean_sum = clean_ugly_symbols(summary[:1800])
 
     uz_title_raw = await translate_to_uzbek(clean_title)
     uz_summary_raw = await translate_to_uzbek(clean_sum)
 
-    uz_title = html.escape(clean_ugly_symbols(uz_title_raw[:150]))
+    uz_title = html.escape(clean_ugly_symbols(uz_title_raw[:165]))
 
-    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', uz_summary_raw) if s.strip()]
-    if len(sentences) >= 2:
-        essence_raw = sentences[0]
-        details_list = [f"• {s}" for s in sentences[1:4]]
+    sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', uz_summary_raw) if len(s.strip()) > 15]
+    if len(sentences) >= 3:
+        essence_raw = f"{sentences[0]} {sentences[1]}"
+        details_list = [f"• {s}" for s in sentences[2:6]]
         more_details_raw = "\n\n".join(details_list)
+    elif len(sentences) == 2:
+        essence_raw = sentences[0]
+        more_details_raw = f"• {sentences[1]}\n\n• Maqolaning to'liq tafsilotlari bilan rasmiy manba orqali tanishishingiz mumkin."
     elif len(sentences) == 1:
         essence_raw = sentences[0]
-        more_details_raw = f"• Yangilik tafsilotlari: {uz_title_raw} bo'yicha birlamchi ma'lumotlar taqdim etildi."
+        more_details_raw = f"• Mazkur texnologik yangilik bo'yicha batafsil ma'lumotlar {source_name} nashrida e'lon qilindi."
     else:
         essence_raw = uz_title_raw
         more_details_raw = f"• {source_name} orqali e'lon qilingan eng so'nggi xabar."
 
-    essence = html.escape(clean_ugly_symbols(essence_raw[:260]))
-    more_details = html.escape(clean_ugly_symbols(more_details_raw[:450]))
+    essence = html.escape(clean_ugly_symbols(essence_raw[:280]))
+    more_details = html.escape(clean_ugly_symbols(more_details_raw[:540]))
     safe_source = html.escape(source_name)
 
     source_link = f"<a href='{original_url}'>{safe_source}</a>" if original_url else safe_source
@@ -597,47 +600,54 @@ async def fallback_formatter(title: str, summary: str, source_name: str, origina
     return apply_premium_emojis(spaced)
 
 async def format_news(title: str, summary: str, source_name: str, category: str = "AI & IT", original_url: str = "") -> str:
-    """Yangilikni o'zbek tiliga professional sarlavha, qisqa mohiyat va ochiluvchi sitata bilan tayyorlash"""
-    client = get_gemini_client()
+    """Yangilikni tabiiy, tushunarli o'zbek tiliga o'girish va boyitilgan faktlar bilan tayyorlash"""
+    prompt = f"""Sen — "{config.CHANNEL_USERNAME}" Telegram kanali uchun professional IT va Sun'iy Intellekt jurnalisti hamda tarjimonisan.
+Vazifang — quyidagi inglizcha yangilikni O'ZBEK TILIDA hamma bir o'qishda tushunadigan, ravon, aniq va MA'LUMOTGA BOY qilib yozib berish.
 
-    prompt = f"""Sen — "{config.CHANNEL_USERNAME}" Telegram kanali uchun yetakchi IT va AI tahlilchisisan.
-Quyidagi xabarni o'zbek tilida juda aniq, jozibador, CHUQUR VA MAZMUNGA BOY qilib qayta yoz.
-
-Sarlavha: {title}
+Asl sarlavha: {title}
 Bo'lim: {category}
 Manba: {source_name}
-Matn: {summary}
+Maqola matni va faktlar:
+{summary}
 
-QAT'IY FORMAT TALABLARI (Har bir bo'lim orasida ALBATTA 2 ta bo'sh qator joy tashla!):
+TARJIMA VA USLUB QOIDALARI (JUDA MUHIM!):
+1. TUSHUNARSIZ VA MAVHUM IBORALAR TAQIQLANADI:
+   - Hech qachon "Google inqilobi", "Texnologiya olamida portlash", "Yangi davr boshlandi", "Kutilmagan zarba" kabi mavhum va tushunarsiz sarlavha yozma!
+   - Sarlavhada AYNAN KIM, NIMA QILGANI va QANDAY ANIQ NATIJA bergani oddiy, tushunarli o'zbek tilida yozilsin (Masalan: "Google yangi Gemini 2.5 Pro modelini taqdim etdi: kod yozish va tahlilda 40% tezroq").
+2. SO'ZMA-SO'Z (KALKALAB) TARJIMA QILMA:
+   - Inglizcha gap qurilishini so'zma-so'z o'girma. Ma'nosini to'liq tushunib, sof va tabiiy o'zbek tilida ifodala.
+   - Texnik atamalarni (API, GPU, Chip, Open-source, Token, Server, Benchmark, Startap, AI agent) buzmasdan yoz va murakkab tushunchalarni oddiy so'z bilan qisqacha tushuntirib ket (masalan: "context window (bir vaqtda qayta ishlanadigan matn hajmi)", "fine-tuning (modelni maxsus vazifaga moslashtirish)").
+3. KO'PROQ ANIQ MA'LUMOT VA FAKTLAR QO'SH:
+   - Xabar quruq yoki 2 og'iz gap bo'lib qolmasin! Maqoladagi barcha muhim raqamlar, narxlar, modellar nomi, tezlik ko'rsatkichlari, kimlar uchun foydali ekani va qanday ishlashini batafsil yoritib ber.
 
-⚡️ <b>(1 ta kuchli, e'tiborni tortuvchi sarlavha)</b>
+QAT'IY FORMAT TALABLARI (Har bir bo'lim orasida ALBATTA 2 ta bo'sh qator tashla!):
 
-📌 (Asosiy voqea mohiyati: 1-2 ta aniq, teran jumla bilan nima bo'lganini tushuntir. DIQQAT: "Mohiyati:" so'zini aslo yozma! To'g'ridan-to'g'ri 📌 emojisi ortidan matn boshlansin!).
+⚡️ <b>(Aniq, tushunarli va ma'noli sarlavha — mavhum "inqilob" so'zlarisiz!)</b>
+
+📌 (Voqeaning asosiy mohiyati: 2 ta to'liq, ravon va tushunarli jumlada kompaniya nima taqdim etgani va bu nima uchun muhimligini ochib ber. DIQQAT: "Mohiyati:" so'zini aslo yozma! To'g'ridan-to'g'ri 📌 emojisi ortidan matn boshlansin!).
 
 <blockquote expandable>📊 <b>Asosiy tafsilotlar:</b>
-• (1-punkt: Texnologik mohiyat, parametrlar, yangi funksiyalar yoki modellar imkoniyati haqida aniq faktlar)
+• <b>Texnologiya va yangiliklar:</b> (Yangi model, qurilma yoki xizmat qanday ishlashi va unga qanday yangi imkoniyatlar qo'shilgani haqida aniq ma'lumot)
 
-• (2-punkt: Benchmark natijalari, tezlik, aniqlik, xotira yoki moliyalashtirish/narx ko'rsatkichlari)
+• <b>Raqamlar va ko'rsatkichlar:</b> (Parametrlar, tezlik, xotira, benchmark natijalari, investitsiya summasi yoki narxlar haqida aniq faktlar)
 
-• (3-punkt: Mazkur yangilik amaliyotda kimlar uchun va qanday muammolarni hal qilishda ishlatilishi)
+• <b>Ustunligi va farqi:</b> (Oldingi versiyalardan yoki raqobatchilardan — masalan OpenAI, Google, Apple, Nvidia yechimlaridan qanday amaliy ustunlikka ega ekani)
+
+• <b>Kimlar uchun va qachondan:</b> (Dasturchilar, biznes yoki oddiy foydalanuvchilar bundan qanday foydalanishi mumkinligi va ishga tushish muddati)
 
 💡 <b>Xulosa:</b>
-(1 ta teran tahliliy jumla bilan mazkur yangilikning soha kelajagiga ta'siri).</blockquote>
+(1-2 ta ravon jumlada ushbu yangilik foydalanuvchilar va IT bozori uchun nimani o'zgartirishi).</blockquote>
 
-🏷 #(Mavzuga mos 3-4 ta aniq dinamik hashtag: kompaniya nomi, model yoki yo'nalish, masalan #Anthropic #Claude #AIXavfsizlik yoki #Nvidia #Blackwell #GPU yoki #OpenAI #ChatGPT)
+🏷 #(Mavzuga mos 3-4 ta aniq hashtag: masalan #Google #Gemini #AI yoki #Nvidia #GPU #Texnologiya)
 
 📡 <b>Manba:</b> {source_name}
 
-QOIDALAR:
-1. "Mohiyati:" so'zi aslo ishlatilmasin, 📌 dan keyin to'g'ridan-to'g'ri matn yozilsin.
-2. 📡 <b>Manba:</b> qismi sitata (<blockquote) ichida emas, sitatadan TASHQARIDA va hashtagdan keyin, eng pastda tursin!
-3. Bo'limlar bir-biriga yopishib qolmasin, oralarida aniq bo'sh qatorlar bo'lsin.
-4. "Asosiy tafsilotlar" bo'limida 2-3 ta sermazmun punkt bo'lsin, umumiy yoki quruq gaplar bo'lmasin. Haqiqiy faktlar, raqamlar va texnik xususiyatlarni kirit!
-5. 🏷 Hashtaglar: umumiy emas, mavzuning o'ziga doir 3-4 ta aniq hashtag yoz (masalan: #Apple #M4Pro #MacBook yoki #DeepSeek #OpenSource #LLM).
-6. HECH QACHON do'kon chegirmalari (deals), aksiyalar, narx arzonlashuvi (Save $..., % off, chegirma) haqida yozma! Texnologiyaning o'ziga e'tibor qarat!
-7. HECH QACHON [...] yoki ... yoki chala gap yozma!
-8. HECH QACHON Markdown yulduzchalaridan (**matn**) foydalanma! Qalin matn uchun faqat <b>matn</b> HTML teglaridan foydalan!
-9. Telegram caption chegarasi qat'iy 1024 belgi! Kanal imzosi va tugmalar to'liq sig'ishi uchun, postning sof matn uzunligi 680-780 belgi oralig'ida bo'lsin (800 belgidan aslo oshmasin, shunda 💡 Xulosa va 🏷 Hashtaglar hech qachon kesilib qolmaydi)!
+TEXNIK CHEKLOVLAR:
+1. "Mohiyati:" so'zi aslo ishlatilmasin, 📌 dan keyin to'g'ridan-to'g'ri gap boshlansin.
+2. 📡 <b>Manba:</b> qismi sitatadan (</blockquote>) TASHQARIDA, hashtagdan keyin eng pastda tursin.
+3. HECH QACHON Markdown yulduzchalaridan (**matn**) foydalanma! Faqat <b>matn</b> HTML teglaridan foydalan!
+4. HECH QACHON [...] yoki chala uzilgan gap yozma.
+5. Telegram caption limiti 1024 belgi! Post ma'lumotga boy bo'lsin, lekin sof matn uzunligi 800–920 belgi oralig'ida bo'lsin (940 belgidan oshmasin, shunda barcha 4 ta punkt, xulosa va hashtaglar to'liq sig'adi).
 """
 
     global LAST_FORMATTER_USED
@@ -654,26 +664,33 @@ QOIDALAR:
     return await fallback_formatter(title, summary, source_name, original_url)
 
 async def regenerate_news(title: str, summary: str, current_caption: str) -> str:
-    """Matnni qayta generatsiya qilish (Multi-Key Pool yordamida)"""
-    prompt = f"""Ushbu xabarni yanada ixchamroq, qisqa tezislar bilan, bo'limlar orasida 2 ta bo'sh qator tashlab, ochiluvchi sitata (<blockquote expandable>) formatida o'zbek tilida qayta yoz:
+    """Matnni qayta generatsiya qilish (yanada tushunarli, ravon va boyitilgan faktlar bilan)"""
+    prompt = f"""Quyidagi IT/AI yangiligini O'ZBEK TILIDA yanada tushunarli, tabiiy, ma'lumotga boy va ravon qilib qayta yoz.
+DIQQAT: "Google inqilobi" kabi mavhum iboralar va so'zma-so'z g'aliz tarjimalar aslo ishlatilmasin! Kim nima qilgani va qanday natija bergani oddiy, tushunarli tilda yozilsin.
+
 Sarlavha: {title}
 Matn: {summary}
 
 Format:
-⚡️ <b>Yangi sarlavha</b>
+⚡️ <b>(Aniq va tushunarli yangi sarlavha)</b>
 
-📌 (qisqa 1 ta jumla. DIQQAT: "Mohiyati:" deb yozma, to'g'ridan-to'g'ri 📌 dan keyin boshla)
+📌 (2 ta ravon jumlada voqeaning asl mohiyati. "Mohiyati:" deb yozma, to'g'ridan-to'g'ri 📌 dan keyin boshla)
 
-<blockquote expandable>📝 <b>Tafsilotlar:</b>
-• (muhim nuqta)
+<blockquote expandable>📊 <b>Asosiy tafsilotlar:</b>
+• <b>Texnik imkoniyatlar:</b> (Asosiy yangilik va funksiyalar)
 
-• (natija)</blockquote>
+• <b>Raqamlar va faktlar:</b> (Ko'rsatkichlar, tezlik, narx yoki parametrlar)
+
+• <b>Amaliy ahamiyati:</b> (Foydalanuvchilar va soha uchun foydasi)
+
+💡 <b>Xulosa:</b>
+(1 ta aniq xulosa).</blockquote>
 
 🏷 #Hashtaglar
 
 📡 <b>Manba:</b> ...
 
-[...] belgilarisiz, 600 belgi atrofida.
+Markdown (** yoki *) ishlatma, faqat <b> HTML teglaridan foydalan. Uzunligi 780–900 belgi atrofida bo'lsin.
 """
     raw_text = await execute_gemini_prompt(prompt)
     if raw_text:
@@ -791,3 +808,131 @@ QOIDALAR:
         cleaned = sanitize_telegram_html(raw)
         return apply_premium_emojis(cleaned)
     return "Kechirasiz, ayni paytda AI serverlarida yuklama yuqori. Iltimos, birozdan so'ng qayta urinib ko'ring yoki savolingizni boshqacharoq shaklda bering."
+
+FALLBACK_POLLS = [
+    {
+        "question": "🤖 Kundalik ishingiz yoki o'qishingizda qaysi Sun'iy Intellekt modelidan eng ko'p foydalanasiz?",
+        "options": [
+            "ChatGPT (OpenAI GPT-4o / o3)",
+            "Google Gemini 2.5 / Flash",
+            "Claude (Anthropic Sonnet)",
+            "DeepSeek / Grok / Boshqa"
+        ],
+        "poll_type": "regular",
+        "correct_option_id": None,
+        "explanation": None
+    },
+    {
+        "question": "🧠 Viktorina: Katta til modellarida (LLM) 'RAG' texnologiyasining asosiy vazifasi nima?",
+        "options": [
+            "Modelni tashqi ishonchli ma'lumotlar bazasi bilan boyitish",
+            "Videolarni yuqori sifatda (4K) generatsiya qilish",
+            "Protsessorning elektr sarfini 50% ga kamaytirish",
+            "Dastur kodini avtomatik ravishda shifrlash"
+        ],
+        "poll_type": "quiz",
+        "correct_option_id": 0,
+        "explanation": "RAG (Retrieval-Augmented Generation) AI modeliga javob berishdan oldin tashqi hujjatlar yoki bazadan aniq faktlarni qidirib topish imkonini beradi."
+    },
+    {
+        "question": "💻 Dasturlash va kod yozishda qaysi AI yordamchisi siz uchun eng samarali?",
+        "options": [
+            "Cursor / Windsurf (AI IDE)",
+            "GitHub Copilot",
+            "ChatGPT / Claude veb-interfeysi",
+            "Kodning barchasini o'zim yozaman"
+        ],
+        "poll_type": "regular",
+        "correct_option_id": None,
+        "explanation": None
+    },
+    {
+        "question": "⚡️ Viktorina: Hozirgi zamonaviy AI chiplarini (H100, Blackwell B200) ishlab chiqaruvchi yetakchi kompaniya qaysi?",
+        "options": [
+            "Intel",
+            "NVIDIA",
+            "Qualcomm",
+            "IBM"
+        ],
+        "poll_type": "quiz",
+        "correct_option_id": 1,
+        "explanation": "NVIDIA kompaniyasi H100, H200 va Blackwell B200 GPU arxitekturalari bilan global AI infratuzilmasining 80% dan ortig'ini ta'minlaydi."
+    }
+]
+
+async def generate_ai_poll(
+    topic: Optional[str] = None,
+    recent_posts: Optional[List[Dict[str, Any]]] = None,
+    poll_type: str = "regular"
+) -> Dict[str, Any]:
+    """
+    Telegram kanali uchun qiziqarli AI so'rovnoma (regular) yoki viktorina (quiz) generatsiya qilish.
+    Qaytaradi: {"question": str, "options": List[str], "poll_type": str, "correct_option_id": Optional[int], "explanation": Optional[str]}
+    """
+    import json
+    import random
+
+    mode_desc = (
+        "VIKTORINA (QUIZ) rejimida: aniq 1 ta to'g'ri javobi bor qiziqarli texnologik savol va qisqa izoh (explanation) bo'lsin."
+        if poll_type == "quiz"
+        else "SO'ROVNOMA (REGULAR POLL) rejimida: obunachilarning fikri, tajribasi yoki tanlovini bilishga qaratilgan qizg'in muhokamali savol bo'lsin."
+    )
+
+    context_block = ""
+    if topic and topic.strip():
+        context_block = f"MAXSUS MAVZU: {topic.strip()}\nShu mavzu doirasida savol tuz."
+    elif recent_posts:
+        news_lines = [f"- {p.get('title', '')}" for p in recent_posts[:5] if p.get("title")]
+        if news_lines:
+            context_block = "KANALDAGI OXIRGI YANGILIKLAR:\n" + "\n".join(news_lines) + "\nShu yangiliklardan kelib chiqib dolzarb savol tuz."
+
+    prompt = f"""Sen "{config.CHANNEL_USERNAME}" (NeuraTech AI) Telegram kanali uchun interaktiv so'rovnoma tuzuvchi mutaxassissan.
+{mode_desc}
+{context_block}
+
+QAT'IY TALABLAR:
+1. Faqat toza JSON obyekt qaytar (hech qanday ```json yoki kirish so'zi yozma).
+2. Savol ("question") o'zbek tilida, qiziqarli, boshida 1 ta mos emoji bilan, uzunligi 250 belgidan oshmasin (HTML teglar ishlatma, chunki Telegram Poll oddiy matn qabul qiladi).
+3. Variantlar ("options") aniq 4 ta bo'lsin, har biri 90 belgidan qisqa, tushunarli va aniq bo'lsin.
+4. Agar poll_type="quiz" bo'lsa, "correct_option_id" (0 dan 3 gacha butun son) va "explanation" (to'g'ri javob sababi, 180 belgidan qisqa) bo'lishi shart.
+
+JSON NAMUNASI:
+{{
+  "question": "🤖 Savol matni?",
+  "options": ["1-variant", "2-variant", "3-variant", "4-variant"],
+  "poll_type": "{poll_type}",
+  "correct_option_id": 0,
+  "explanation": "Qisqa va aniq izoh."
+}}
+"""
+    raw = await execute_gemini_prompt(prompt)
+    if raw:
+        try:
+            cleaned_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.IGNORECASE)
+            match = re.search(r"\{.*\}", cleaned_json, flags=re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+                q = re.sub(r"<[^>]+>", "", str(data.get("question", "")).strip())[:255]
+                opts_raw = data.get("options", [])
+                opts = [re.sub(r"<[^>]+>", "", str(o).strip())[:95] for o in opts_raw if str(o).strip()][:4]
+                if q and len(opts) >= 2:
+                    p_type = "quiz" if poll_type == "quiz" else "regular"
+                    corr_id = data.get("correct_option_id")
+                    if p_type == "quiz":
+                        corr_id = int(corr_id) if isinstance(corr_id, int) and 0 <= corr_id < len(opts) else 0
+                    else:
+                        corr_id = None
+                    expl = re.sub(r"<[^>]+>", "", str(data.get("explanation") or "").strip())[:195] if p_type == "quiz" else None
+                    return {
+                        "question": q,
+                        "options": opts,
+                        "poll_type": p_type,
+                        "correct_option_id": corr_id,
+                        "explanation": expl
+                    }
+        except Exception as e:
+            print(f"[AI Poll Parse Xatolik]: {e}")
+
+    # Fallback
+    candidates = [p for p in FALLBACK_POLLS if p["poll_type"] == poll_type] or FALLBACK_POLLS
+    return dict(random.choice(candidates))

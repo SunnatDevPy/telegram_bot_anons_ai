@@ -3,8 +3,14 @@
 
 # SQLite ma'lumotlar bazasi
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
+data/
+assets/covers/*.jpg
+assets/covers/*.png
+assets/covers/*.jpeg
 
 # Python bytecode va keshlar
 __pycache__/

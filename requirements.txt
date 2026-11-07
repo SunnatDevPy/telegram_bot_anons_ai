@@ -1,7 +1,11 @@
-aiogram>=3.14.0
-feedparser>=6.0.11
-google-genai>=2.0.0
-httpx>=0.27.0
-aiosqlite>=0.20.0
-python-dotenv>=1.0.0
-Pillow>=10.0.0
+# Versiyalar yuqori chegara bilan cheklangan: kelgusi major-versiya chiqishi
+# botni kutilmaganda buzmasligi uchun (production uchun tavsiya etiladi).
+aiogram>=3.14.0,<4.0.0
+feedparser>=6.0.11,<7.0.0
+google-genai>=2.0.0,<3.0.0
+httpx>=0.27.0,<1.0.0
+aiosqlite>=0.20.0,<1.0.0
+python-dotenv>=1.0.0,<2.0.0
+Pillow>=10.0.0,<13.0.0
+
+# Testlar uchun (ixtiyoriy): pip install -r requirements-dev.txt

@@ -96,6 +96,31 @@ flowchart LR
 
 ---
 
+### 8-Bosqich: 🎨 Rasmsiz Yangiliklar Uchun Avto-Banner Generatori (HD Cover Generator)
+> **Holati:** ✅ Bajarildi va Serverda Faol
+
+- [x] **1200x675 HD Dark-Tech / Cyber Neon Banner:** RSS manbasida yoki veb-sahifada rasm topilmasa, `Pillow` yordamida sarlavha, kategoriya, manba va `NeuraTech AI` brendingi tushirilgan 16:9 muqova avtomatik chiziladi.
+- [x] **Lokal fayl va `file_id` qo'llab-quvvatlovi:** `send_media_robust` hamda `send_user_preview_media` funksiyalari lokal koverlar, Telegram `file_id` va URL manzillari bilan uzluksiz ishlaydi.
+
+---
+
+### 9-Bosqich: 📊 Interaktiv AI So'rovnoma va Viktorinalar (Polls & Quizzes)
+> **Holati:** ✅ Bajarildi va Serverda Faol
+
+- [x] **`/poll` va `/quiz` buyruqlari hamda Admin Panel menyusi:** Oxirgi yangiliklar yoki admin kiritgan maxsus mavzu (`/poll ChatGPT`, `/quiz NVIDIA`) asosida Gemini AI 4 variantli so'rovnoma yoki to'g'ri javobli viktorina tuzadi.
+- [x] **Jonli Preview va 1-bosishda Kanalga Chiqarish:** Adminga avval namuna yuboriladi — uni kanalga chiqarish, boshqa savolga almashtirish yoki `Poll <-> Quiz` rejimiga o'girish mumkin.
+
+---
+
+### 10-Bosqich: 📈 Kengaytirilgan Statistika va Analitika (`/stats`)
+> **Holati:** ✅ Bajarildi va Serverda Faol
+
+- [x] **Mijozlar o'sish dinamikasi:** Jami, faol, botni to'xtatgan, bugun, oxirgi 7 kun va 30 kunda qo'shilgan foydalanuvchilar soni.
+- [x] **Postlar va faollik hisoboti:** Jami kanalga chiqarilgan, bugun / 7 kun / 30 kunda e'lon qilingan, navbatdagi, qoralamadagi va rad etilgan postlar.
+- [x] **Top Manbalar Reytingi:** Qaysi RSS manbadan nechta post chiqqani va ularning foiz ulushi (`🥇 🥈 🥉`).
+
+---
+
 ## 🔑 .env dagi API Kalitlar Haqida Muhim Eslatma
 
 * `.env` da hozir 3 ta kalit kiritilgan:

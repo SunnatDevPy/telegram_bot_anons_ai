@@ -13,7 +13,7 @@ from ai_formatter import (
     attach_source_link, strip_source_link, prepare_channel_caption
 )
 from bot_handlers import get_moderation_keyboard, get_channel_post_keyboard, get_dayjest_keyboard
-from media_helper import send_media_robust
+from media_helper import send_media_robust, get_or_create_cover_for_post
 from diagnostics import send_admin_alert
 from backup_service import check_daily_backup
 
@@ -126,15 +126,34 @@ async def check_due_scheduled_posts(bot: Bot):
     # Ketma-ket spam bo'lmasligi uchun faqat 1 ta eng birinchi rejadagi post chiqariladi
     post = due_posts[0]
     now_str = datetime.now(timezone.utc).isoformat()
-    await database.set_post_status(post["id"], "published", published_at=now_str)
     try:
         source_btn_active = (await database.get_setting("channel_source_btn", "1") == "1")
         channel_kb = await get_channel_post_keyboard(post_id=post["id"], original_url=post.get("url"), source_name=post.get("source_name"))
         cap_to_send = prepare_channel_caption(post["uz_caption"], post.get("source_name", "IT"), post.get("url", ""), source_btn_active=source_btn_active)
         await send_to_channel(bot, post["image_url"], cap_to_send, reply_markup=channel_kb)
+        # Status FAQAT kanalga muvaffaqiyatli yuborilgandan keyin "published" ga o'tkaziladi.
+        # Aks holda post "yo'qolib" qoladi: bazada published deb qayd etiladi, lekin kanalda hech qachon ko'rinmaydi.
+        await database.set_post_status(post["id"], "published", published_at=now_str)
         print(f"[Avto-Reja] Post #{post['id']} kanalga muvaffaqiyatli chiqarildi.")
     except Exception as e:
         print(f"[Avto-Reja Xatolik] Post #{post['id']}: {e}")
+        # Postni navbatda saqlab qolamiz, lekin har 30 soniyada qayta urinmasligi uchun
+        # keyingi urinishni bir oraliq vaqtga suramiz.
+        try:
+            retry_at = (datetime.now(timezone.utc) + timedelta(minutes=max(1, spacing_mins))).isoformat()
+            await database.set_post_status(post["id"], "scheduled", scheduled_at=retry_at)
+        except Exception:
+            pass
+        await send_admin_alert(
+            bot=bot,
+            message=(
+                f"⚠️ <b>Rejalashtirilgan Post #{post['id']} kanalga chiqarilmadi:</b>\n"
+                f"<code>{html.escape(str(e))}</code>\n\n"
+                f"Post hali ham navbatda (<code>scheduled</code>) holatida qoladi va keyingi tekshiruvda qayta urinib ko'riladi."
+            ),
+            alert_type="scheduled_post_failed",
+            cooldown_minutes=20
+        )
 
 async def check_daily_digest(bot: Bot, force: bool = False) -> bool:
     """Har kuni soat 21:00 da o'sha kungi eng muhim 5 ta xabar dayjestini chiqarish"""
@@ -231,6 +250,14 @@ async def process_news_cycle(bot: Bot) -> int:
             original_url=item["url"]
         )
 
+        # Agar RSS xabarda rasm topilmagan bo'lsa, avtomatik HD Cover Banner generatsiya qilamiz
+        if not item.get("image_url"):
+            item["image_url"] = get_or_create_cover_for_post(
+                title=item["title"],
+                category=item.get("category", "IT & AI"),
+                source_name=item["source_name"]
+            )
+
         if getattr(ai_formatter, "LAST_FORMATTER_USED", "") == "fallback":
             await send_admin_alert(
                 bot=bot,
@@ -289,18 +316,31 @@ async def process_news_cycle(bot: Bot) -> int:
                         uz_caption=uz_caption,
                         image_url=item["image_url"],
                         source_name=item["source_name"],
-                        status="published",
-                        published_at=now_str
+                        status="scheduled",
+                        scheduled_at=now_str
                     )
                     try:
                         source_btn_active = (await database.get_setting("channel_source_btn", "1") == "1")
                         channel_kb = await get_channel_post_keyboard(post_id=post_id, original_url=item["url"], source_name=item.get("source_name"))
                         cap_to_send = prepare_channel_caption(uz_caption, item.get("source_name", "IT"), item["url"], source_btn_active=source_btn_active)
                         await send_to_channel(bot, item["image_url"], cap_to_send, reply_markup=channel_kb)
+                        # Yuborish muvaffaqiyatli bo'lgandan keyingina "published" holatiga o'tkazamiz
+                        await database.set_post_status(post_id, "published", published_at=now_str)
                         processed_count += 1
                         print(f"[Avto-Chiqarish] '{item['title']}' kanalga joylandi.")
                     except Exception as e:
                         print(f"[Avto-Chiqarish Xatolik]: {e}")
+                        # Post navbatda (scheduled) holatida qoladi, keyingi siklda qayta uriniladi
+                        await send_admin_alert(
+                            bot=bot,
+                            message=(
+                                f"⚠️ <b>Post #{post_id} kanalga chiqarilmadi:</b>\n"
+                                f"<code>{html.escape(str(e))}</code>\n\n"
+                                f"Post navbatda qoldirildi va qayta uriniladi."
+                            ),
+                            alert_type="channel_post_failed",
+                            cooldown_minutes=15
+                        )
                 else:
                     # Navbat to'lib ketishi va yangiliklar eskirib ketmasligi uchun tekshiruv
                     current_queue = await database.get_scheduled_count()
@@ -399,7 +439,19 @@ async def run_scheduler_worker(bot: Bot):
             now_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
             if last_cleanup_date != now_date:
                 last_cleanup_date = now_date
-                await database.cleanup_old_posts(days=45)
+                stale_drafts = await database.cleanup_old_posts(days=45)
+                if stale_drafts > 0:
+                    await send_admin_alert(
+                        bot=bot,
+                        message=(
+                            f"🧹 <b>Baza tozalandi:</b> {stale_drafts} ta tasdiqlanmagan (draft) post "
+                            f"7 kundan ortiq javobsiz qolgani uchun avtomatik rad etildi.\n\n"
+                            f"<i>Kelajakda postlar yo'qolib qolmasligi uchun ularni o'z vaqtida "
+                            f"tasdiqlang yoki /queue orqali tekshirib turing.</i>"
+                        ),
+                        alert_type="stale_drafts_cleaned",
+                        cooldown_minutes=1440
+                    )
 
             raw_interval = await database.get_setting("interval_minutes", "25")
             interval_minutes = int(raw_interval) if raw_interval and raw_interval.isdigit() else 25
