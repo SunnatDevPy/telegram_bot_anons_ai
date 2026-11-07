@@ -243,14 +243,15 @@ def get_admin_keyboard(
             InlineKeyboardButton(text="📈 Statistika (/stats)", callback_data="view_detailed_stats")
         ],
         [
-            InlineKeyboardButton(text="📊 AI So'rovnoma (/poll)", callback_data="admin_poll_menu"),
-            InlineKeyboardButton(text="📰 Kechki Dayjest (/digest)", callback_data="admin_preview_digest")
+            InlineKeyboardButton(text="🧠 AI Tokenlar (/stats_ai)", callback_data="view_ai_stats"),
+            InlineKeyboardButton(text="📊 AI So'rovnoma (/poll)", callback_data="admin_poll_menu")
         ],
         [
-            InlineKeyboardButton(text="🩺 Salomatlik (/status)", callback_data="view_bot_status"),
-            InlineKeyboardButton(text="💾 Zaxira (/backup)", callback_data="admin_download_backup")
+            InlineKeyboardButton(text="📰 Kechki Dayjest (/digest)", callback_data="admin_preview_digest"),
+            InlineKeyboardButton(text="🩺 Salomatlik (/status)", callback_data="view_bot_status")
         ],
         [
+            InlineKeyboardButton(text="💾 Zaxira (/backup)", callback_data="admin_download_backup"),
             InlineKeyboardButton(text="✨ Premium Emojilar", callback_data="admin_emojis_menu")
         ],
         [
@@ -842,6 +843,7 @@ async def cmd_help(message: Message):
         "\n\n👑 <b>Admin buyruqlari:</b>\n"
         "/admin — boshqaruv paneli\n"
         "/stats (<i>statistika</i>) — mijozlar, postlar va manbalar hisoboti\n"
+        "/stats_ai — AI tokenlar sarfi, kunlik limitlar va modellar holati\n"
         "/poll [mavzu] — AI so'rovnoma yaratish\n"
         "/quiz [mavzu] — AI viktorina (test) yaratish\n"
         "/status — tizim salomatligi (0 token)\n"
@@ -914,11 +916,24 @@ async def render_detailed_stats_html() -> str:
 def get_detailed_stats_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="🔄 Yangilash", callback_data="refresh_detailed_stats"),
-            InlineKeyboardButton(text="🩺 Tizim salomatligi", callback_data="view_bot_status")
+            InlineKeyboardButton(text="🧠 AI Tokenlar (/stats_ai)", callback_data="view_ai_stats"),
+            InlineKeyboardButton(text="🔄 Yangilash", callback_data="refresh_detailed_stats")
         ],
         [
+            InlineKeyboardButton(text="🩺 Tizim salomatligi", callback_data="view_bot_status"),
             InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")
+        ]
+    ])
+
+def get_ai_stats_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🔄 Yangilash", callback_data="refresh_ai_stats"),
+            InlineKeyboardButton(text="📊 Asosiy statistika", callback_data="view_detailed_stats")
+        ],
+        [
+            InlineKeyboardButton(text="🩺 Tizim holati (/status)", callback_data="view_bot_status"),
+            InlineKeyboardButton(text="⚙️ Admin panel", callback_data="view_admin_panel")
         ]
     ])
 
@@ -942,6 +957,27 @@ async def cb_detailed_stats(call: CallbackQuery):
     except Exception:
         await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
     await call.answer("Statistika yangilandi ✅" if call.data == "refresh_detailed_stats" else "")
+
+@router.message(Command("stats_ai", "aistats", "ai_stats"))
+async def cmd_stats_ai(message: Message):
+    if not await check_is_admin(message.from_user.id):
+        await message.reply("Kechirasiz, ushbu buyruq faqat bot ma'muri uchun.")
+        return
+    text = await ai_formatter.render_ai_stats_html()
+    await message.answer(text, parse_mode="HTML", reply_markup=get_ai_stats_keyboard())
+
+@router.callback_query(F.data.in_({"view_ai_stats", "refresh_ai_stats"}))
+async def cb_ai_stats(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+    text = await ai_formatter.render_ai_stats_html()
+    kb = get_ai_stats_keyboard()
+    try:
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+    except Exception:
+        await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+    await call.answer("AI token statistikasi yangilandi ✅" if call.data == "refresh_ai_stats" else "")
 
 # ==================== INTERAKTIV AI SO'ROVNOMA VA VIKTORINA (POLL / QUIZ) ====================
 

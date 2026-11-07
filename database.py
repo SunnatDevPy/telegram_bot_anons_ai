@@ -69,11 +69,25 @@ async def init_db():
             )
         """)
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS ai_token_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key_index INTEGER NOT NULL,
+                model_name TEXT NOT NULL,
+                prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                total_tokens INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            )
+        """)
+
         # Tez-tez ishlatiladigan so'rovlar uchun indekslar (baza o'sganda sekinlashuvni oldini oladi)
         await db.execute("CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_posts_scheduled ON posts(status, scheduled_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_posts_source ON posts(source_name)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(status, published_at)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_ai_tokens_created ON ai_token_logs(created_at)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_ai_tokens_model ON ai_token_logs(model_name)")
 
         await db.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('mode', ?)",
@@ -795,4 +809,137 @@ async def get_detailed_statistics() -> Dict[str, Any]:
                 result["last_published"] = dict(lp)
 
     return result
+
+# ==================== AI TOKENLAR VA MODELLAR ANALITIKASI ====================
+
+async def log_ai_token_usage(
+    key_index: int,
+    model_name: str,
+    prompt_tokens: int = 0,
+    completion_tokens: int = 0,
+    total_tokens: int = 0
+):
+    """Har bir muvaffaqiyatli Gemini so'rovining token sarfini bazada qayd etish"""
+    now_str = datetime.now(timezone.utc).isoformat()
+    try:
+        async with get_db() as db:
+            await db.execute("""
+                INSERT INTO ai_token_logs (key_index, model_name, prompt_tokens, completion_tokens, total_tokens, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (key_index, model_name, prompt_tokens, completion_tokens, total_tokens, now_str))
+            await db.commit()
+    except Exception as e:
+        print(f"[log_ai_token_usage xatolik]: {e}")
+
+async def get_ai_token_stats() -> Dict[str, Any]:
+    """
+    AI tokenlari va so'rovlarining bugungi va jami statistikasi:
+    - Bugungi prompt, completion, total tokenlar (Toshkent vaqti bilan 00:00 dan boshlab)
+    - Jami prompt, completion, total tokenlar
+    - Modellar bo'yicha sarf (requests_today, tokens_today, requests_all, tokens_all)
+    - Kalitlar bo'yicha sarf (requests_today, tokens_today, requests_all, tokens_all)
+    """
+    now_t = datetime.now(config.TASHKENT_TZ)
+    today_start_t = now_t.replace(hour=0, minute=0, second=0, microsecond=0)
+    today_iso = today_start_t.astimezone(timezone.utc).isoformat()
+
+    stats: Dict[str, Any] = {
+        "today": {
+            "requests": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        },
+        "all_time": {
+            "requests": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0
+        },
+        "by_model": {},
+        "by_key": {}
+    }
+
+    try:
+        async with get_db() as db:
+            db.row_factory = aiosqlite.Row
+
+            # 1. Bugungi sarf
+            async with db.execute("""
+                SELECT
+                    COUNT(*) as reqs,
+                    COALESCE(SUM(prompt_tokens), 0) as p_tok,
+                    COALESCE(SUM(completion_tokens), 0) as c_tok,
+                    COALESCE(SUM(total_tokens), 0) as t_tok
+                FROM ai_token_logs
+                WHERE created_at >= ?
+            """, (today_iso,)) as cur:
+                row = await cur.fetchone()
+                if row:
+                    stats["today"] = {
+                        "requests": int(row["reqs"] or 0),
+                        "prompt_tokens": int(row["p_tok"] or 0),
+                        "completion_tokens": int(row["c_tok"] or 0),
+                        "total_tokens": int(row["t_tok"] or 0)
+                    }
+
+            # 2. Barcha vaqtlar sarfi
+            async with db.execute("""
+                SELECT
+                    COUNT(*) as reqs,
+                    COALESCE(SUM(prompt_tokens), 0) as p_tok,
+                    COALESCE(SUM(completion_tokens), 0) as c_tok,
+                    COALESCE(SUM(total_tokens), 0) as t_tok
+                FROM ai_token_logs
+            """) as cur:
+                row = await cur.fetchone()
+                if row:
+                    stats["all_time"] = {
+                        "requests": int(row["reqs"] or 0),
+                        "prompt_tokens": int(row["p_tok"] or 0),
+                        "completion_tokens": int(row["c_tok"] or 0),
+                        "total_tokens": int(row["t_tok"] or 0)
+                    }
+
+            # 3. Modellar kesimida sarf
+            async with db.execute("""
+                SELECT
+                    model_name,
+                    COUNT(*) as all_reqs,
+                    COALESCE(SUM(total_tokens), 0) as all_tok,
+                    COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) as today_reqs,
+                    COALESCE(SUM(CASE WHEN created_at >= ? THEN total_tokens ELSE 0 END), 0) as today_tok
+                FROM ai_token_logs
+                GROUP BY model_name
+            """, (today_iso, today_iso)) as cur:
+                for r in await cur.fetchall():
+                    stats["by_model"][r["model_name"]] = {
+                        "requests_today": int(r["today_reqs"] or 0),
+                        "tokens_today": int(r["today_tok"] or 0),
+                        "requests_all": int(r["all_reqs"] or 0),
+                        "tokens_all": int(r["all_tok"] or 0)
+                    }
+
+            # 4. Kalitlar kesimida sarf
+            async with db.execute("""
+                SELECT
+                    key_index,
+                    COUNT(*) as all_reqs,
+                    COALESCE(SUM(total_tokens), 0) as all_tok,
+                    COALESCE(SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END), 0) as today_reqs,
+                    COALESCE(SUM(CASE WHEN created_at >= ? THEN total_tokens ELSE 0 END), 0) as today_tok
+                FROM ai_token_logs
+                GROUP BY key_index
+            """, (today_iso, today_iso)) as cur:
+                for r in await cur.fetchall():
+                    stats["by_key"][int(r["key_index"])] = {
+                        "requests_today": int(r["today_reqs"] or 0),
+                        "tokens_today": int(r["today_tok"] or 0),
+                        "requests_all": int(r["all_reqs"] or 0),
+                        "tokens_all": int(r["all_tok"] or 0)
+                    }
+    except Exception as e:
+        print(f"[get_ai_token_stats xatolik]: {e}")
+
+    return stats
 

@@ -8,6 +8,7 @@ import httpx
 from google import genai
 from google.genai import types
 import config
+import database
 
 LAST_FORMATTER_USED = "gemini"
 
@@ -26,6 +27,8 @@ class GeminiKeyNode:
         self.consecutive_errors = 0
         self.last_error = ""
         self.last_used: Optional[datetime] = None
+        self.total_tokens = 0
+        self.last_model = ""
 
     def _init_client(self):
         try:
@@ -51,12 +54,15 @@ class GeminiKeyNode:
         self.total_errors += 1
         print(f"[Gemini KeyPool] Kalit #{self.index} ({self.masked}) {reason} tufayli {seconds} soniyaga sovutish rejimiga o'tkazildi.")
 
-    def record_success(self):
+    def record_success(self, tokens: int = 0, model: str = ""):
         self.total_requests += 1
         self.total_success += 1
         self.consecutive_errors = 0
         self.cooldown_until = None
         self.last_used = datetime.now(timezone.utc)
+        self.total_tokens += tokens
+        if model:
+            self.last_model = model
 
 class GeminiKeyPool:
     """
@@ -123,12 +129,53 @@ class GeminiKeyPool:
                 "success": n.total_success,
                 "errors": n.total_errors,
                 "consecutive_errors": n.consecutive_errors,
-                "cooldown": not n.is_available()
+                "cooldown": not n.is_available(),
+                "tokens": n.total_tokens,
+                "last_model": n.last_model
             })
         return report
 
 # Global yagona hovuz nusxasi
 GEMINI_POOL = GeminiKeyPool()
+
+GEMINI_MODELS_INFO = {
+    "gemini-3.1-flash-lite-preview": {
+        "title": "Gemini 3.1 Flash Lite",
+        "role": "Asosiy (Ultra-tezkor & Tejamkor)",
+        "rpd": "500 so'rov/kun",
+        "rpm": "15 RPM",
+        "tpm": "250,000 TPM",
+        "context": "1,048,576 token",
+        "status_tag": "🟢 Faol (Asosiy)"
+    },
+    "gemini-3-flash-preview": {
+        "title": "Gemini 3 Flash",
+        "role": "1-Zaxira (Chuqur tahlil)",
+        "rpd": "50 so'rov/kun",
+        "rpm": "15 RPM",
+        "tpm": "1,000,000 TPM",
+        "context": "1,048,576 token",
+        "status_tag": "🟢 Tayyor (1-Zaxira)"
+    },
+    "gemini-3.8-flash": {
+        "title": "Gemini 3.8 Flash",
+        "role": "2-Zaxira (Kengaytirilgan)",
+        "rpd": "20 so'rov/kun",
+        "rpm": "15 RPM",
+        "tpm": "1,000,000 TPM",
+        "context": "1,048,576 token",
+        "status_tag": "🟢 Tayyor (2-Zaxira)"
+    },
+    "gemini-flash-latest": {
+        "title": "Gemini Flash Latest",
+        "role": "Favqulodda Zaxira",
+        "rpd": "20 so'rov/kun",
+        "rpm": "15 RPM",
+        "tpm": "1,000,000 TPM",
+        "context": "1,048,576 token",
+        "status_tag": "🟢 Tayyor (Favqulodda)"
+    }
+}
 
 def get_all_clients() -> list:
     """Barcha mavjud API kalitlar uchun mijozlar ro'yxati (orqaga moslik uchun)"""
@@ -145,6 +192,7 @@ async def execute_gemini_prompt(prompt: str) -> Optional[str]:
     - Har bir so'rov kalitlar o'rtasida navbatma-navbat (Round-Robin) taqsimlanadi.
     - 429 (kvota tugashi) olgan kalit avtomatik 5 daqiqaga sovutish rejimiga qo'yiladi.
     - Zudlik bilan navbatdagi zaxira kalitga uzatiladi.
+    - Token sarfi (Prompt, Candidate, Total) aniqlanadi va SQLite bazaga qayd qilinadi.
     """
     candidate_models = [
         "gemini-3.1-flash-lite-preview",
@@ -171,7 +219,30 @@ async def execute_gemini_prompt(prompt: str) -> Optional[str]:
                     timeout=20.0
                 )
                 if response and response.text:
-                    node.record_success()
+                    p_tok = 0
+                    c_tok = 0
+                    t_tok = 0
+                    if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                        p_tok = getattr(response.usage_metadata, 'prompt_token_count', 0) or 0
+                        c_tok = getattr(response.usage_metadata, 'candidates_token_count', 0) or 0
+                        t_tok = getattr(response.usage_metadata, 'total_token_count', 0) or (p_tok + c_tok)
+
+                    node.record_success(tokens=t_tok, model=model_name)
+
+                    # Baza statistikasiga yozish
+                    try:
+                        asyncio.create_task(
+                            database.log_ai_token_usage(
+                                key_index=node.index,
+                                model_name=model_name,
+                                prompt_tokens=p_tok,
+                                completion_tokens=c_tok,
+                                total_tokens=t_tok
+                            )
+                        )
+                    except Exception as log_err:
+                        print(f"[log_ai_token_usage log error]: {log_err}")
+
                     return response.text
             except (asyncio.TimeoutError, Exception) as e:
                 err_msg = str(e)
@@ -189,6 +260,109 @@ async def execute_gemini_prompt(prompt: str) -> Optional[str]:
                     continue
 
     return None
+
+async def render_ai_stats_html() -> str:
+    """
+    /stats_ai komandasi uchun to'liq va chiroyli HTML hisobot generatsiyasi:
+    - Bugungi va barcha vaqtlar token sarfi (Prompt, Completion, Total)
+    - Modellar holati, ularning rollari va limitlari (RPD, RPM, TPM, Context)
+    - Kalitlar hovuzi holati (Aktiv, 429 sovutish, har bir kalit sarflagan tokenlar)
+    """
+    stats = await database.get_ai_token_stats()
+    today = stats.get("today", {})
+    all_time = stats.get("all_time", {})
+    by_model = stats.get("by_model", {})
+    by_key = stats.get("by_key", {})
+
+    tz_tashkent = timezone(timedelta(hours=5))
+    now_tashkent = datetime.now(tz_tashkent)
+    date_str = now_tashkent.strftime("%d.%m.%Y, %H:%M")
+
+    cand_order = [
+        "gemini-3.1-flash-lite-preview",
+        "gemini-3-flash-preview",
+        "gemini-3.8-flash",
+        "gemini-flash-latest"
+    ]
+    models_blocks = []
+    for i, m_id in enumerate(cand_order, 1):
+        info = GEMINI_MODELS_INFO.get(m_id, {
+            "title": m_id,
+            "role": "Zaxira",
+            "rpd": "Noma'lum",
+            "rpm": "15 RPM",
+            "tpm": "1M TPM",
+            "context": "1M token",
+            "status_tag": "🟢 Tayyor"
+        })
+        m_stat = by_model.get(m_id, {"requests_today": 0, "tokens_today": 0, "requests_all": 0, "tokens_all": 0})
+        m_title = html.escape(info["title"])
+        m_role = html.escape(info["role"])
+        m_tag = info["status_tag"]
+        rpd = info["rpd"]
+        rpm = info["rpm"]
+        tpm = info["tpm"]
+        ctx = info["context"]
+        r_td = m_stat["requests_today"]
+        t_td = m_stat["tokens_today"]
+
+        block = (
+            f"<b>{i}️⃣ {m_title}</b> <i>({m_role})</i>\n"
+            f"   • Holat: {m_tag}\n"
+            f"   • Limit: <b>{rpd}</b> | {rpm} | {tpm}\n"
+            f"   • Kontekst oynasi: <b>{ctx}</b>\n"
+            f"   • Bugun: <b>{r_td} ta so'rov</b> (<code>{t_td:,}</code> token)"
+        )
+        models_blocks.append(block)
+
+    models_text = "\n\n".join(models_blocks)
+
+    pool_reports = GEMINI_POOL.get_status_report()
+    key_lines = []
+    for rep in pool_reports:
+        k_idx = rep["index"]
+        masked = rep["masked"]
+        k_stat = by_key.get(k_idx, {"requests_today": 0, "tokens_today": 0, "tokens_all": 0})
+        st_text = rep["status"]
+        tok_td = k_stat["tokens_today"]
+        req_td = k_stat["requests_today"]
+        tok_all = k_stat["tokens_all"]
+        key_lines.append(
+            f"🔑 <b>Kalit #{k_idx}</b> (<code>{masked}</code>): {st_text}\n"
+            f"   └ Bugun: <b>{req_td} so'rov</b> (<code>{tok_td:,}</code> tok) | Jami: <code>{tok_all:,}</code> tok"
+        )
+    keys_text = "\n".join(key_lines) if key_lines else "<i>Kalitlar topilmadi</i>"
+
+    t_req = today.get("requests", 0)
+    t_prompt = today.get("prompt_tokens", 0)
+    t_comp = today.get("completion_tokens", 0)
+    t_total = today.get("total_tokens", 0)
+
+    a_req = all_time.get("requests", 0)
+    a_total = all_time.get("total_tokens", 0)
+
+    text = (
+        f"🧠 <b>GEMINI AI TOKEN VA MODEL STATISTIKASI</b>\n"
+        f"📅 <i>Sana: {date_str} (Toshkent vaqti)</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📊 <b>BUGUNGI SARF:</b>\n"
+        f"• 🔄 So'rovlar soni: <b>{t_req:,} ta</b>\n"
+        f"• 📥 Kiruvchi (Prompt): <code>{t_prompt:,}</code> token\n"
+        f"• 📤 Javob (Completion): <code>{t_comp:,}</code> token\n"
+        f"• ⚡ Jami bugun: <b><code>{t_total:,}</code> token</b>\n\n"
+        f"📈 <b>BARCHA VAQTLAR BO'YICHA:</b>\n"
+        f"• 📬 Jami so'rovlar: <b>{a_req:,} ta</b>\n"
+        f"• 💎 Jami tokenlar: <b><code>{a_total:,}</code> token</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🤖 <b>AKTIV MODELLAR VA KVOTA LIMITLARI:</b>\n\n"
+        f"{models_text}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🗝 <b>MULTI-KEY HOVUZI ({len(GEMINI_POOL.nodes)} ta kalit):</b>\n"
+        f"{keys_text}\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"💡 <i>Avtomatika: Agar biror kalit 429 (quota) ga uchrasa, tizim to'xtamay zudlik bilan keyingi kalitga va zaxira modelga o'tadi hamda 5 daqiqadan so'ng qayta ochiladi.</i>"
+    )
+    return text
 
 def clean_ugly_symbols(text: str) -> str:
     """Xom HTML teglar, [...] belgilari va RSS qoldiqlarini tozalash (qatorlarni saqlagan holda)"""
