@@ -1109,3 +1109,305 @@ JSON NAMUNASI:
     # Fallback
     candidates = [p for p in FALLBACK_POLLS if p["poll_type"] == poll_type] or FALLBACK_POLLS
     return dict(random.choice(candidates))
+
+# ==================== BEPUL AI ASBOBLAR VA PROMPTLAR RUKNI ====================
+
+FALLBACK_AI_TOOLS = [
+    {
+        "tool_name": "Flux.1",
+        "tool_url": "https://blackforestlabs.ai",
+        "category": "Rasm & Dizayn",
+        "title": "Flux.1 — Dunyodagi eng kuchli bepul AI rasm generatori",
+        "caption": (
+            "🛠 <b>KUNNING BEPUL AI VOSITASI</b>\n\n"
+            "🚀 <b>Flux.1</b> — <i>Midjourney darajasidagi fotorealistik suratlarni yaratuvchi eng so'nggi ochiq model.</i>\n\n"
+            "📌 <b>Asosiy imkoniyatlari:</b>\n"
+            "• Odam yuzlari, qo'llar va ko'zlarni xatosiz, tabiiy chizadi.\n"
+            "• Rasm ichidagi harflar va so'zlarni buzmasdan, chiroyli tipografika bilan yozadi.\n"
+            "• HuggingFace va Fal.ai orqali bepul foydalanish mumkin.\n\n"
+            "🆓 <b>Bepul imkoniyati:</b>\n"
+            "• Har kuni bepul generatsiyalar va ochiq yuklab olish imkoniyati.\n\n"
+            "💡 <b>Sinab ko'rish uchun Prompt:</b>\n"
+            "<blockquote>A cinematic close-up portrait of an Uzbek cyber-engineer working in a neon-lit futuristic lab in Tashkent 2050, 8k resolution, photorealistic, highly detailed, dramatic lighting</blockquote>\n\n"
+            "🔗 <b>Rasmiy sayt:</b> <a href=\"https://blackforestlabs.ai\">blackforestlabs.ai</a>\n\n"
+            "🏷 #AITools #BepulAI #Dizayn #NeuraTech"
+        ),
+        "prompt_example": "A cinematic close-up portrait of an Uzbek cyber-engineer..."
+    },
+    {
+        "tool_name": "Bolt.new",
+        "tool_url": "https://bolt.new",
+        "category": "Dasturlash & Web",
+        "title": "Bolt.new — Brauzerda sun'iy intellekt orqali 1 daqiqada to'liq sayt va ilova yaratish",
+        "caption": (
+            "🛠 <b>KUNNING BEPUL AI VOSITASI</b>\n\n"
+            "🚀 <b>Bolt.new</b> — <i>Bir og'iz matnli buyruq bilan to'liq dasturni noldan yig'ib beruvchi AI platforma.</i>\n\n"
+            "📌 <b>Asosiy imkoniyatlari:</b>\n"
+            "• React, Vue, Next.js yoki Node.js loyihalarni to'liq noldan yozadi.\n"
+            "• Kodni to'g'ridan-to'g'ri brauzerda ishga tushirib, natijani jonli ko'rsatadi.\n"
+            "• Netlify ga 1 ta tugma bilan jonli internetga joylash (deploy) imkoniyati bor.\n\n"
+            "🆓 <b>Bepul imkoniyati:</b>\n"
+            "• Har kuni yangilanadigan bepul AI tokenlar.\n\n"
+            "💡 <b>Sinab ko'rish uchun Prompt:</b>\n"
+            "<blockquote>Create a modern, responsive Telegram Bot Analytics Dashboard in dark mode with interactive charts and export to CSV button</blockquote>\n\n"
+            "🔗 <b>Rasmiy sayt:</b> <a href=\"https://bolt.new\">bolt.new</a>\n\n"
+            "🏷 #AITools #Dasturlash #WebDev #NeuraTech"
+        ),
+        "prompt_example": "Create a modern, responsive Telegram Bot Analytics Dashboard..."
+    },
+    {
+        "tool_name": "Krea AI",
+        "tool_url": "https://krea.ai",
+        "category": "Video & Dizayn",
+        "title": "Krea AI — Real vaqt rejimida rasm va video generatsiya qiluvchi bepul vosita",
+        "caption": (
+            "🛠 <b>KUNNING BEPUL AI VOSITASI</b>\n\n"
+            "🚀 <b>Krea AI</b> — <i>Siz chizayotgan oddiy qoralamani real vaqtda durdonaga aylantiruvchi neyron tarmoq.</i>\n\n"
+            "📌 <b>Asosiy imkoniyatlari:</b>\n"
+            "• Real-time Canvas: Chizayotgan har bir chizig'ingiz bir zumda fotoga aylanadi.\n"
+            "• AI Enhancer: Xira suratlarni 4K/8K gacha tiniqlashtiradi.\n"
+            "• AI Video: Rasmlardan bir necha soniyada kinematik video hosil qiladi.\n\n"
+            "🆓 <b>Bepul imkoniyati:</b>\n"
+            "• Kunlik bepul kreditlar barcha foydalanuvchilar uchun mavjud.\n\n"
+            "💡 <b>Sinab ko'rish uchun Prompt:</b>\n"
+            "<blockquote>Futuristic sports car speeding through ancient Samarkand Registan square at night, glowing neon highlights, cyberpunk atmosphere, hyperrealistic 4k</blockquote>\n\n"
+            "🔗 <b>Rasmiy sayt:</b> <a href=\"https://krea.ai\">krea.ai</a>\n\n"
+            "🏷 #AITools #Grafika #KreaAI #NeuraTech"
+        ),
+        "prompt_example": "Futuristic sports car speeding through ancient Samarkand..."
+    },
+    {
+        "tool_name": "Perplexity AI",
+        "tool_url": "https://perplexity.ai",
+        "category": "Qidiruv & Tadqiqot",
+        "title": "Perplexity AI — Google qidiruvining sun'iy intellektli kuchaytirilgan o'rni",
+        "caption": (
+            "🛠 <b>KUNNING BEPUL AI VOSITASI</b>\n\n"
+            "🚀 <b>Perplexity AI</b> — <i>Internetdagi eng so'nggi manbalarni tekshirib, havolalari bilan aniq javob beruvchi qidiruvchi.</i>\n\n"
+            "📌 <b>Asosiy imkoniyatlari:</b>\n"
+            "• Reklamalarsiz, faktlar va ishonchli manbalar bilan to'g'ridan-to'g'ri javob beradi.\n"
+            "• PDF, Word yoki matnli hujjatlarni yuklab, ularni chuqur tahlil qildirishingiz mumkin.\n"
+            "• Har qanday murakkab savolga bir necha soniyada xulosa tayyorlaydi.\n\n"
+            "🆓 <b>Bepul imkoniyati:</b>\n"
+            "• Cheksiz standart qidiruv va har 4 soatda bepul Pro qidiruvlar.\n\n"
+            "💡 <b>Foydalanish namunasi:</b>\n"
+            "<blockquote>2026-yilda O'zbekiston IT bozorida eng talabgir bo'lgan dasturlash tillari va sohalar bo'yicha tahliliy hisobot tayyorlab ber</blockquote>\n\n"
+            "🔗 <b>Rasmiy sayt:</b> <a href=\"https://perplexity.ai\">perplexity.ai</a>\n\n"
+            "🏷 #AITools #Perplexity #Qidiruv #NeuraTech"
+        ),
+        "prompt_example": "2026-yilda O'zbekiston IT bozorida eng talabgir bo'lgan dasturlash tillari..."
+    },
+    {
+        "tool_name": "Suno AI",
+        "tool_url": "https://suno.com",
+        "category": "Musiqa & Ovoz",
+        "title": "Suno AI — Matndan to'liq musiqa, vokal va qo'shiq yaratuvchi AI",
+        "caption": (
+            "🛠 <b>KUNNING BEPUL AI VOSITASI</b>\n\n"
+            "🚀 <b>Suno AI</b> — <i>Istalgan she'r yoki mavzudan professional studiya sifatidagi qo'shiq yaratuvchi vosita.</i>\n\n"
+            "📌 <b>Asosiy imkoniyatlari:</b>\n"
+            "• Har qanday janrda (Pop, Rock, Hip-Hop, Milliy, Lo-Fi) musiqa yaratadi.\n"
+            "• O'zbek tilidagi matnlarni ham to'g'ri talaffuz va ritm bilan kuylay oladi.\n"
+            "• 2 daqiqalik to'liq vokal va musiqa trekini chiqaradi.\n\n"
+            "🆓 <b>Bepul imkoniyati:</b>\n"
+            "• Har kuni bepul 50 kredit (kuniga 10 tagacha bepul qo'shiq yaratish mumkin).\n\n"
+            "💡 <b>Sinab ko'rish uchun uslub (Style):</b>\n"
+            "<blockquote>Genre: Melodic Uzbek pop with modern synthwave beats. Mood: Inspiring, energetic. Lyrics: IT va dasturlash haqida quvnoq qo'shiq</blockquote>\n\n"
+            "🔗 <b>Rasmiy sayt:</b> <a href=\"https://suno.com\">suno.com</a>\n\n"
+            "🏷 #AITools #Suno #Musiqa #NeuraTech"
+        ),
+        "prompt_example": "Genre: Melodic Uzbek pop with modern synthwave beats..."
+    }
+]
+
+async def generate_ai_tool_post(topic_or_category: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Kanal uchun bepul AI asbobi va unga oid amaliy promptni generatsiya qilish.
+    """
+    import json
+    import random
+
+    topic_hint = f"Maxsus yo'nalish yoki vosita: {topic_or_category}\n" if topic_or_category else ""
+    prompt = f"""Sen "{config.CHANNEL_USERNAME}" (NeuraTech AI) Telegram kanali uchun "Kunning Bepul AI Vositasi" rukniga post tayyorlovchi texnologik mutaxassissan.
+{topic_hint}
+Hozirgi kunda mashhur, foydali, eng muhimi bepul tarifi (free tier) bor bo'lgan yangi AI vosita (masalan: rasm, video, kod, ovoz, matn, 3D yoki ta'lim bo'yicha) haqida post tayyorla.
+
+QAT'IY TALABLAR:
+1. Faqat toza JSON obyekt qaytar (hech qanday markdown ```json tegisiz).
+2. JSON maydonlari:
+   - "tool_name": Vosita nomi (masalan: "Krea AI", "Bolt.new", "Flux.1", "Haiper AI", "Cursor", "ElevenLabs", "Suno", "v0.dev", "DeepSeek", "Ideogram")
+   - "tool_url": Rasmiy sayti havolasi (https://...)
+   - "category": Yo'nalishi ("Rasm & Dizayn", "Video & Animatsiya", "Dasturlash & Web", "Musiqa & Ovoz", "Qidiruv & Matn")
+   - "title": Qisqa va jozibali sarlavha (70 belgidan oshmasin)
+   - "description": 1 ta ta'sirli jumla (nima vazifa bajaradi)
+   - "features": Asosiy imkoniyatlari (3 ta qisqa nuqta ro'yxati)
+   - "free_tier": Bepul tarifida nimalar berilishi
+   - "prompt_example": Boshlovchilar sinab ko'rishi uchun inglizcha yoki o'zbekcha aniq prompt namunasi
+3. Matnlar toza o'zbek tilida, zamonaviy va professional bo'lsin.
+
+JSON NAMUNASI:
+{{
+  "tool_name": "Nomi",
+  "tool_url": "https://...",
+  "category": "Rasm & Dizayn",
+  "title": "Nomi — Qisqa jozibador sarlavha",
+  "description": "Nima vazifani bajarishi.",
+  "features": [
+    "1-afzallik",
+    "2-afzallik",
+    "3-afzallik"
+  ],
+  "free_tier": "Kunlik bepul imkoniyatlari",
+  "prompt_example": "Aniq prompt matni..."
+}}
+"""
+    raw = await execute_gemini_prompt(prompt)
+    if raw:
+        try:
+            cleaned_json = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.IGNORECASE)
+            match = re.search(r"\{.*\}", cleaned_json, flags=re.DOTALL)
+            if match:
+                data = json.loads(match.group(0))
+                name = html.escape(str(data.get("tool_name", "")).strip())
+                url = str(data.get("tool_url", "")).strip() or "https://google.com"
+                cat = html.escape(str(data.get("category", "Sun'iy Intellekt")).strip())
+                title = clean_all_asterisks_to_html(str(data.get("title", "")).strip())
+                desc = clean_all_asterisks_to_html(str(data.get("description", "")).strip())
+                feats = [clean_all_asterisks_to_html(str(f).strip()) for f in data.get("features", []) if str(f).strip()]
+                free_tier = clean_all_asterisks_to_html(str(data.get("free_tier", "")).strip())
+                pr_ex = html.escape(str(data.get("prompt_example", "")).strip())
+
+                if name and desc:
+                    feats_lines = "\n".join([f"• {f}" for f in feats[:4]])
+                    caption = (
+                        f"🛠 <b>KUNNING BEPUL AI VOSITASI</b>\n\n"
+                        f"🚀 <b>{name}</b> — <i>{desc}</i>\n\n"
+                        f"📌 <b>Asosiy imkoniyatlari:</b>\n"
+                        f"{feats_lines}\n\n"
+                        f"🆓 <b>Bepul tarifi:</b>\n"
+                        f"• {free_tier}\n\n"
+                        f"💡 <b>Sinab ko'rish uchun Prompt:</b>\n"
+                        f"<blockquote>{pr_ex}</blockquote>\n\n"
+                        f"🔗 <b>Rasmiy sayt:</b> <a href=\"{url}\">{name}</a>\n\n"
+                        f"🏷 #{cat.replace(' ', '').replace('&', '')} #AITools #NeuraTech #Foydali"
+                    )
+                    return {
+                        "tool_name": name,
+                        "tool_url": url,
+                        "category": cat,
+                        "title": title or f"{name} — Bepul AI vosita",
+                        "caption": caption,
+                        "prompt_example": pr_ex
+                    }
+        except Exception as e:
+            print(f"[generate_ai_tool_post JSON Parse Xatolik]: {e}")
+
+    # Fallback
+    return dict(random.choice(FALLBACK_AI_TOOLS))
+
+# ==================== GADJET VA SMARTFON TANLASH MASLAHATCHISI ====================
+
+async def generate_gadget_advice(user_query: str) -> str:
+    """
+    Foydalanuvchining talabi bo'yicha eng maqbul gadjetlarni (smartfon, noutbuk, aksessuar)
+    taqqoslab, narxi va plyus/minuslari bilan professional maslahat berish.
+    """
+    cleaned_query = (user_query or "").strip()
+    if not cleaned_query:
+        return (
+            "📱 <b>Gadjet tanlash bo'yicha savolingizni yozing.</b>\n"
+            "<i>Masalan: «$300 atrofida kamerasi va batareyasi zo'r telefon tavsiya qil» yoki «Talaba uchun $500 gacha noutbuk»</i>"
+        )
+
+    prompt = f"""Sen NeuraTech kanalining eng tajribali texnologik ekspertisan (Gadget & Tech Advisor).
+Foydalanuvchi quyidagi talab bilan gadjet so'ramoqda:
+"{cleaned_query}"
+
+QAT'IY KO'RSATMALAR:
+1. Foydalanuvchining byudjeti va ehtiyojiga eng mos keladigan 2 yoki 3 ta aniq qurilmani taqqoslab ber.
+2. Har bir qurilma uchun:
+   - Nomi va taxminiy narxi (O'zbekiston yoki global bozordagi narxi $ yoki so'mda).
+   - ⚡️ Asosiy ustunligi (Nega aynan shu?).
+   - ⚠️ Kamchiligi yoki e'tibor berish kerak bo'lgan jihati.
+   - 🎯 Kim uchun mosligi.
+3. Oxirida 1 ta aniq «Xulosa va yakuniy tavsiya» (eng optimal variant) ber.
+4. Javobingni o'ta qulay, tushunarli, Telegram HTML teglari (<b>, <i>, <code>, <blockquote>) bilan bezat.
+5. Hech qanday Markdown ** belgilari ishlatma! Faqat toza HTML teglari.
+"""
+    raw = await execute_gemini_prompt(prompt)
+    if raw:
+        cleaned = clean_all_asterisks_to_html(raw.strip())
+        return cleaned
+
+    # Fallback
+    return (
+        "📱 <b>NeuraTech Gadjet Maslahatchisi</b>\n\n"
+        "Kechirasiz, sun'iy intellekt xizmati ayni daqiqada band. "
+        "Iltimos, bir necha daqiqadan so'ng qayta urinib ko'ring yoki savolingizni aniqroq qilib yozing (masalan: byudjet va talabingizni ko'rsating)."
+    )
+
+def get_static_ai_tools_category(cat_key: str) -> str:
+    """Foydalanuvchi botda toifalar bo'yicha eng zo'r bepul AI asboblarni ko'rishi uchun tayyor katalog"""
+    catalogs = {
+        "design": (
+            "🎨 <b>TOP BEPUL AI VOSITALAR: Rasm & Dizayn</b>\n\n"
+            "1️⃣ <b>Flux.1</b> (<a href=\"https://blackforestlabs.ai\">Sayt</a>)\n"
+            "• Eng realistik fotolar, matnlarni rasm ichiga xatosiz yozadi.\n"
+            "• Bepul: HuggingFace va Fal.ai orqali bepul.\n\n"
+            "2️⃣ <b>Krea AI</b> (<a href=\"https://krea.ai\">Sayt</a>)\n"
+            "• Real vaqtda chizish va rasmlarni 4K gacha tiniqlashtirish.\n"
+            "• Bepul: Har kuni bepul kreditlar beriladi.\n\n"
+            "3️⃣ <b>Ideogram AI</b> (<a href=\"https://ideogram.ai\">Sayt</a>)\n"
+            "• Logo, banner va tipografika uchun eng zo'r neyrotarmoq.\n"
+            "• Bepul: Kuniga 20 tagacha bepul generatsiya."
+        ),
+        "video": (
+            "🎬 <b>TOP BEPUL AI VOSITALAR: Video & Animatsiya</b>\n\n"
+            "1️⃣ <b>Haiper AI</b> (<a href=\"https://haiper.ai\">Sayt</a>)\n"
+            "• Matn va rasmlardan kinematik video generatsiya qilish.\n"
+            "• Bepul: Kunlik bepul kreditlar bilan HD video olish mumkin.\n\n"
+            "2️⃣ <b>Luma Dream Machine</b> (<a href=\"https://lumalabs.ai\">Sayt</a>)\n"
+            "• Kamera harakatlari va dinamik video yaratish.\n"
+            "• Bepul: Har oy 30 tagacha bepul video.\n\n"
+            "3️⃣ <b>Viggle AI</b> (<a href=\"https://viggle.ai\">Sayt</a>)\n"
+            "• Istalgan odam rasmini raqsga tushirish yoki harakatlantirish.\n"
+            "• Bepul: Discord va veb-saytda bepul rejimi mavjud."
+        ),
+        "code": (
+            "💻 <b>TOP BEPUL AI VOSITALAR: Dasturlash & Web</b>\n\n"
+            "1️⃣ <b>Bolt.new</b> (<a href=\"https://bolt.new\">Sayt</a>)\n"
+            "• Brauzerda matn orqali to'liq veb-sayt va ilovalarni yig'ish.\n"
+            "• Bepul: Kunlik tokenlar bilan to'liq dastur tayyorlash.\n\n"
+            "2️⃣ <b>Cursor AI</b> (<a href=\"https://cursor.com\">Sayt</a>)\n"
+            "• Dunyodagi eng kuchli AI kod muharriri (VS Code asosida).\n"
+            "• Bepul: Standart modellardan cheksiz foydalanish.\n\n"
+            "3️⃣ <b>v0.dev by Vercel</b> (<a href=\"https://v0.dev\">Sayt</a>)\n"
+            "• Faqat ta'rif berish orqali zamonaviy UI/UX komponentlar yaratish.\n"
+            "• Bepul: Boshlang'ich bepul kreditlar taqdim etiladi."
+        ),
+        "audio": (
+            "🎵 <b>TOP BEPUL AI VOSITALAR: Ovoz & Musiqa</b>\n\n"
+            "1️⃣ <b>Suno AI</b> (<a href=\"https://suno.com\">Sayt</a>)\n"
+            "• Matndan to'liq qo'shiq va musiqa yaratish (o'zbekcha ham biladi!).\n"
+            "• Bepul: Kuniga 10 tagacha bepul qo'shiq (50 kredit).\n\n"
+            "2️⃣ <b>ElevenLabs</b> (<a href=\"https://elevenlabs.io\">Sayt</a>)\n"
+            "• Inson ovozidan farq qilmaydigan tabiiy nutq va ovoz klonlash.\n"
+            "• Bepul: Har oy 10,000 ta bepul belgi.\n\n"
+            "3️⃣ <b>Udio AI</b> (<a href=\"https://udio.com\">Sayt</a>)\n"
+            "• Yuqori sifatli musiqa treklarini qismlarga bo'lib yaratish.\n"
+            "• Bepul: Har oy bepul 100 ta trek."
+        ),
+        "research": (
+            "📝 <b>TOP BEPUL AI VOSITALAR: Matn & Qidiruv</b>\n\n"
+            "1️⃣ <b>DeepSeek-R1</b> (<a href=\"https://chat.deepseek.com\">Sayt</a>)\n"
+            "• Ochiq manbali, eng murakkab matematika va mantiqiy masalalarni yechuvchi AI.\n"
+            "• Bepul: Mutlaqo bepul va tezkor!\n\n"
+            "2️⃣ <b>Perplexity AI</b> (<a href=\"https://perplexity.ai\">Sayt</a>)\n"
+            "• Real vaqtdagi internet qidiruvi va manbalarga asoslangan javoblar.\n"
+            "• Bepul: Cheksiz standart qidiruv.\n\n"
+            "3️⃣ <b>Claude 3.5 Sonnet</b> (<a href=\"https://claude.ai\">Sayt</a>)\n"
+            "• Insoniy tushunish va tahlil qilish bo'yicha dunyoda 1-o'rindagi model.\n"
+            "• Bepul: Kunlik bepul so'rovlar limiti bilan."
+        )
+    }
+    return catalogs.get(cat_key, catalogs["design"])

@@ -22,7 +22,8 @@ import ai_formatter
 from ai_formatter import (
     regenerate_news, safe_telegram_caption, answer_ai_assistant_question,
     attach_source_link, strip_source_link, prepare_channel_caption,
-    generate_daily_digest, generate_ai_poll
+    generate_daily_digest, generate_ai_poll,
+    generate_gadget_advice, generate_ai_tool_post, get_static_ai_tools_category
 )
 from media_helper import send_media_robust, send_user_preview_media, get_or_create_cover_for_post
 from diagnostics import get_system_health, format_health_html
@@ -33,12 +34,16 @@ router = Router()
 admin_broadcast_state = {}    # {admin_id: "waiting_message"}
 admin_broadcast_pending = {}  # {admin_id: {"chat_id": int, "message_id": int}}
 
+# Admin AI Tool keshi
+admin_ai_tool_cache = {}      # {admin_id: dict}
+
 # Admin qoralama postni tahrirlash holati: {admin_id: {"post_id": int, "origin": str, "page": int}}
 admin_edit_draft_state = {}
 
-# Foydalanuvchilar qidiruv va AI maslahatchi holatlari
+# Foydalanuvchilar qidiruv, AI maslahatchi va Gadjet yordamchisi holatlari
 user_search_state = {}        # {user_id: True}
 user_ai_state = {}            # {user_id: True}
+user_gadget_state = {}        # {user_id: True}
 
 # Admin Premium Emoji sozlash holati: {admin_id: "lightning"}
 admin_emoji_edit_state = {}
@@ -247,11 +252,14 @@ def get_admin_keyboard(
             InlineKeyboardButton(text="📊 AI So'rovnoma (/poll)", callback_data="admin_poll_menu")
         ],
         [
-            InlineKeyboardButton(text="📰 Kechki Dayjest (/digest)", callback_data="admin_preview_digest"),
-            InlineKeyboardButton(text="🩺 Salomatlik (/status)", callback_data="view_bot_status")
+            InlineKeyboardButton(text="🛠 Bepul AI Asbob (/aitool)", callback_data="admin_generate_tool"),
+            InlineKeyboardButton(text="📰 Kechki Dayjest (/digest)", callback_data="admin_preview_digest")
         ],
         [
-            InlineKeyboardButton(text="💾 Zaxira (/backup)", callback_data="admin_download_backup"),
+            InlineKeyboardButton(text="🩺 Salomatlik (/status)", callback_data="view_bot_status"),
+            InlineKeyboardButton(text="💾 Zaxira (/backup)", callback_data="admin_download_backup")
+        ],
+        [
             InlineKeyboardButton(text="✨ Premium Emojilar", callback_data="admin_emojis_menu")
         ],
         [
@@ -465,6 +473,7 @@ def get_user_reply_keyboard() -> ReplyKeyboardMarkup:
     """Oddiy obunachilar (mijozlar) uchun pastki menyu tugmalari"""
     kb = [
         [KeyboardButton(text="🟢 🔥 Top 10 ta AI Yangilik")],
+        [KeyboardButton(text="📱 Gadjet Maslahatchisi"), KeyboardButton(text="🛠 Bepul AI Asboblar")],
         [KeyboardButton(text="🔍 Qidiruv"), KeyboardButton(text="💬 AI Maslahatchi")],
         [KeyboardButton(text="⚡️ Eng so'nggi yangilik"), KeyboardButton(text="📢 Rasmiy Kanalimiz")]
     ]
@@ -828,6 +837,8 @@ async def cmd_help(message: Message):
         "📖 <b>NeuraTech AI — Yordam</b>\n\n"
         "🟢 <b>Mavjud imkoniyatlar:</b>\n"
         "• 🔥 <b>Top 10 ta AI Yangilik</b> — eng so'nggi xabarlar ro'yxati\n"
+        "• 📱 <b>Gadjet Maslahatchisi</b> — smartfon va texnika tanlash bo'yicha yordamchi\n"
+        "• 🛠 <b>Bepul AI Asboblar</b> — eng sara bepul neyron tarmoqlar katalogi\n"
         "• ⚡️ <b>Eng so'nggi yangilik</b> — oxirgi e'lon qilingan post\n"
         "• 🔍 <b>Qidiruv</b> — mavzu yoki kalit so'z bo'yicha qidirish\n"
         "• 💬 <b>AI Maslahatchi</b> — IT va AI bo'yicha savol-javob\n"
@@ -844,6 +855,7 @@ async def cmd_help(message: Message):
         "/admin — boshqaruv paneli\n"
         "/stats (<i>statistika</i>) — mijozlar, postlar va manbalar hisoboti\n"
         "/stats_ai — AI tokenlar sarfi, kunlik limitlar va modellar holati\n"
+        "/aitool [mavzu] — Kunning bepul AI vositasi postini yaratish\n"
         "/poll [mavzu] — AI so'rovnoma yaratish\n"
         "/quiz [mavzu] — AI viktorina (test) yaratish\n"
         "/status — tizim salomatligi (0 token)\n"
@@ -1183,6 +1195,311 @@ async def cb_delete_poll(call: CallbackQuery):
         await call.message.edit_text("❌ <b>So'rovnoma bekor qilindi.</b>", parse_mode="HTML", reply_markup=None)
     except Exception:
         pass
+
+# ==================== KUNNING BEPUL AI VOSITASI VA PROMPTLAR RUKNI ====================
+
+def get_ai_tool_preview_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🟢 📢 Kanalga chiqarish", callback_data="admin_pub_aitool")],
+        [InlineKeyboardButton(text="🖼 HD Muqova (Cover) yaratish", callback_data="admin_cover_aitool")],
+        [
+            InlineKeyboardButton(text="🔄 Boshqa AI Tool yaratish", callback_data="admin_generate_tool"),
+            InlineKeyboardButton(text="❌ Bekor qilish", callback_data="admin_cancel_aitool")
+        ],
+        [InlineKeyboardButton(text="⚙️ Admin panelga qaytish", callback_data="view_admin_panel")]
+    ])
+
+@router.message(Command("aitool", "tool", "ai_tool"))
+async def cmd_admin_ai_tool(message: Message):
+    if not await check_is_admin(message.from_user.id):
+        await message.reply("Kechirasiz, ushbu buyruq faqat bot ma'muri uchun.")
+        return
+
+    topic = message.text.split(maxsplit=1)[1] if len(message.text.split()) > 1 else None
+    topic_str = f" («{topic}»)" if topic else ""
+    wait_msg = await message.answer(f"🛠 <i>Kunning bepul AI vositasi{topic_str} va prompt generatsiya qilinmoqda...</i>", parse_mode="HTML")
+    tool_data = await generate_ai_tool_post(topic)
+    try:
+        await wait_msg.delete()
+    except Exception:
+        pass
+
+    admin_ai_tool_cache[message.from_user.id] = tool_data
+    caption = tool_data.get("caption", "")
+    await message.answer(
+        f"📋 <b>AI TOOL POST PREVIEW:</b>\n\n{caption}",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=get_ai_tool_preview_keyboard()
+    )
+
+@router.callback_query(F.data == "admin_generate_tool")
+async def cb_admin_generate_tool(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    await call.answer("Yangi bepul AI vosita generatsiya qilinmoqda... ⏳")
+    wait_msg = await call.message.answer("🛠 <i>Yangi bepul AI asbob va amaliy prompt tayyorlanmoqda...</i>", parse_mode="HTML")
+    tool_data = await generate_ai_tool_post()
+    try:
+        await wait_msg.delete()
+    except Exception:
+        pass
+
+    admin_ai_tool_cache[call.from_user.id] = tool_data
+    caption = tool_data.get("caption", "")
+    await call.message.answer(
+        f"📋 <b>AI TOOL POST PREVIEW:</b>\n\n{caption}",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=get_ai_tool_preview_keyboard()
+    )
+
+@router.callback_query(F.data == "admin_cover_aitool")
+async def cb_admin_cover_aitool(call: CallbackQuery):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    tool_data = admin_ai_tool_cache.get(call.from_user.id)
+    if not tool_data:
+        await call.answer("AI Tool ma'lumoti topilmadi!", show_alert=True)
+        return
+
+    await call.answer("HD Muqova yaratilmoqda... ⏳")
+    title = tool_data.get("title") or f"{tool_data.get('tool_name', 'AI Tool')} — Bepul AI vosita"
+    import os
+    cover_path = get_or_create_cover_for_post(title=title, category="AI Tools", source_name="NeuraTech")
+    if cover_path and os.path.exists(cover_path):
+        tool_data["image_url"] = cover_path
+        admin_ai_tool_cache[call.from_user.id] = tool_data
+        await call.message.answer_photo(
+            photo=FSInputFile(cover_path),
+            caption=f"🖼 <b>HD Muqova rasm muvaffaqiyatli biriktirildi!</b>\n\n{tool_data.get('caption', '')}",
+            parse_mode="HTML",
+            reply_markup=get_ai_tool_preview_keyboard()
+        )
+    else:
+        await call.answer("Muqova yaratishda xatolik!", show_alert=True)
+
+@router.callback_query(F.data == "admin_pub_aitool")
+async def cb_admin_pub_aitool(call: CallbackQuery, bot: Bot):
+    if not await check_is_admin(call.from_user.id):
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    tool_data = admin_ai_tool_cache.get(call.from_user.id)
+    if not tool_data:
+        await call.answer("Chiqarish uchun AI vosita topilmadi!", show_alert=True)
+        return
+
+    caption = tool_data.get("caption", "")
+    img_path = tool_data.get("image_url")
+    tool_url = tool_data.get("tool_url", config.CHANNEL_LINK)
+
+    channel_btn = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🌐 Rasmiy saytiga o'tish", url=tool_url)],
+        [InlineKeyboardButton(text="🤖 NeuraTech Bot", url=f"https://t.me/{config.BOT_USERNAME}")]
+    ])
+
+    import os
+    try:
+        if img_path and os.path.exists(img_path):
+            await bot.send_photo(
+                chat_id=config.CHANNEL_ID,
+                photo=FSInputFile(img_path),
+                caption=caption[:1024],
+                parse_mode="HTML",
+                reply_markup=channel_btn
+            )
+        else:
+            await bot.send_message(
+                chat_id=config.CHANNEL_ID,
+                text=caption,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=channel_btn
+            )
+
+        admin_ai_tool_cache.pop(call.from_user.id, None)
+        await call.answer("Kanalga muvaffaqiyatli joylandi! ✅")
+        await call.message.edit_text(
+            f"✅ <b>Kunning Bepul AI Vositasi («{tool_data.get('tool_name')}») kanalga joylandi!</b>",
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🛠 Yana AI Tool yaratish", callback_data="admin_generate_tool")],
+                [InlineKeyboardButton(text="⚙️ Admin panel", callback_data="view_admin_panel")]
+            ])
+        )
+    except Exception as e:
+        await call.answer("Kanalga chiqarishda xatolik!", show_alert=True)
+        await call.message.answer(f"❌ <b>Xatolik:</b>\n<code>{html.escape(str(e))}</code>", parse_mode="HTML")
+
+@router.callback_query(F.data == "admin_cancel_aitool")
+async def cb_admin_cancel_aitool(call: CallbackQuery):
+    admin_ai_tool_cache.pop(call.from_user.id, None)
+    await call.answer("Bekor qilindi.")
+    try:
+        await call.message.edit_text("❌ <b>AI Tool posti bekor qilindi.</b>", parse_mode="HTML", reply_markup=None)
+    except Exception:
+        pass
+
+
+# ==================== FOYDALANUVCHILAR UCHUN BEPUL AI ASBOBLAR KATALOGI ====================
+
+def get_ai_tools_user_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🎨 Rasm & Dizayn", callback_data="aitool_view:design"),
+            InlineKeyboardButton(text="🎬 Video & Animatsiya", callback_data="aitool_view:video")
+        ],
+        [
+            InlineKeyboardButton(text="💻 Dasturlash & Web", callback_data="aitool_view:code"),
+            InlineKeyboardButton(text="🎵 Ovoz & Musiqa", callback_data="aitool_view:audio")
+        ],
+        [
+            InlineKeyboardButton(text="📝 Matn & Qidiruv", callback_data="aitool_view:research"),
+            InlineKeyboardButton(text="🎲 Yangi AI Tool topish", callback_data="aitool_random_gen")
+        ],
+        [
+            InlineKeyboardButton(text="⬅️ Bosh menyuga qaytish", callback_data="user_refresh_top")
+        ]
+    ])
+
+@router.message(F.text.in_({"🛠 Bepul AI Asboblar", "Bepul AI Asboblar", "/aitools", "/tools"}))
+async def cmd_user_ai_tools(message: Message):
+    await database.register_user(message.from_user.id, message.from_user.username, message.from_user.first_name, message.from_user.last_name)
+    user_gadget_state.pop(message.from_user.id, None)
+    user_search_state.pop(message.from_user.id, None)
+    user_ai_state.pop(message.from_user.id, None)
+
+    text = (
+        "🛠 <b>NeuraTech — Bepul AI Asboblar va Promptlar Markazi</b>\n\n"
+        "Bu yerda siz har qanday sohada ish unumdorligingizni oshiradigan, eng muhimi <b>bepul tarifi (Free Tier)</b> mavjud bo'lgan eng ilg'or sun'iy intellekt vositalarini topishingiz mumkin.\n\n"
+        "O'zingizga qiziq yo'nalishni tanlang 👇"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=get_ai_tools_user_keyboard())
+
+@router.callback_query(F.data.startswith("aitool_view:"))
+async def cb_user_view_aitool_cat(call: CallbackQuery):
+    cat_key = call.data.split(":")[1]
+    content = get_static_ai_tools_category(cat_key)
+    await call.answer()
+    try:
+        await call.message.edit_text(
+            content,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=get_ai_tools_user_keyboard()
+        )
+    except Exception:
+        await call.message.answer(
+            content,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=get_ai_tools_user_keyboard()
+        )
+
+@router.callback_query(F.data == "aitool_random_gen")
+async def cb_user_random_aitool(call: CallbackQuery):
+    await call.answer("Yangi bepul AI vosita qidirilmoqda... ⏳")
+    wait_msg = await call.message.answer("⚡️ <i>Eng so'nggi bepul AI vosita va prompt tayyorlanmoqda...</i>", parse_mode="HTML")
+    tool_data = await generate_ai_tool_post()
+    try:
+        await wait_msg.delete()
+    except Exception:
+        pass
+    caption = tool_data.get("caption", "")
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🌐 Rasmiy saytiga o'tish", url=tool_data.get("tool_url", "https://google.com"))],
+        [InlineKeyboardButton(text="🎲 Yana bitta yangi AI vosita", callback_data="aitool_random_gen")],
+        [InlineKeyboardButton(text="📂 Barcha toifalar", callback_data="aitool_view:design")]
+    ])
+    await call.message.answer(caption, parse_mode="HTML", disable_web_page_preview=True, reply_markup=kb)
+
+
+# ==================== GADJET VA SMARTFON TANLASH MASLAHATCHISI ====================
+
+def get_gadget_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📱 Smartfonlar", callback_data="gadget_cat:smartphones"),
+            InlineKeyboardButton(text="💻 Noutbuklar", callback_data="gadget_cat:laptops")
+        ],
+        [
+            InlineKeyboardButton(text="🎧 Quloqchinlar", callback_data="gadget_cat:earphones"),
+            InlineKeyboardButton(text="⌚️ Smart Soatlar", callback_data="gadget_cat:smartwatches")
+        ],
+        [
+            InlineKeyboardButton(text="🖥 PC & Kompyuter", callback_data="gadget_cat:pc"),
+            InlineKeyboardButton(text="❌ Yakunlash", callback_data="user_cancel_gadget")
+        ]
+    ])
+
+@router.message(F.text.in_({"📱 Gadjet Maslahatchisi", "Gadjet Maslahatchisi", "/gadget", "/gadgets"}))
+async def cmd_gadget_advisor(message: Message):
+    await database.register_user(message.from_user.id, message.from_user.username, message.from_user.first_name, message.from_user.last_name)
+    user_gadget_state[message.from_user.id] = True
+    user_search_state.pop(message.from_user.id, None)
+    user_ai_state.pop(message.from_user.id, None)
+
+    text = (
+        "📱 <b>NeuraTech — Gadjet & Smartfon Tanlash Yordamchisi</b>\n\n"
+        "Qanday qurilma qidiryapsiz? O'z talablaringiz va byudjetingizni yozing:\n\n"
+        "💡 <i>Namunalar:</i>\n"
+        "• «$300 atrofida kamerasi va batareyasi zo'r telefon tavsiya qil»\n"
+        "• «Talaba uchun dasturlashga $600 gacha noutbuk»\n"
+        "• «iPhone 15 yoki Samsung S24 qaysi biri yaxshiroq?»\n"
+        "• «1 mln so'mga shovqinni pasaytiruvchi (ANC) simsiz quloqchin»\n\n"
+        "Yoki toifalardan birini tanlang 👇"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=get_gadget_keyboard())
+
+@router.callback_query(F.data.startswith("gadget_cat:"))
+async def cb_gadget_category(call: CallbackQuery):
+    cat = call.data.split(":")[1]
+    user_gadget_state[call.from_user.id] = True
+    user_search_state.pop(call.from_user.id, None)
+    user_ai_state.pop(call.from_user.id, None)
+
+    names = {
+        "smartphones": "Smartfonlar",
+        "laptops": "Noutbuklar",
+        "earphones": "Quloqchinlar",
+        "smartwatches": "Smart Soatlar",
+        "pc": "Kompyuter yig'ish"
+    }
+    cat_name = names.get(cat, "Gadjet")
+    await call.answer()
+    await call.message.answer(
+        f"🎯 <b>{cat_name}</b> bo'yicha maslahat:\n\n"
+        f"Iltimos, byudjetingiz va asosiy talablaringizni yozing.\n"
+        f"<i>Masalan: «$250 gacha bo'lsin, batareyasi 2 kunga yetsin» yoki «O'yinlar uchun $800 gacha»</i>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="user_cancel_gadget")]
+        ])
+    )
+
+@router.callback_query(F.data == "user_cancel_gadget")
+async def cb_cancel_gadget(call: CallbackQuery):
+    user_gadget_state.pop(call.from_user.id, None)
+    await call.answer("Gadjet maslahatchisi yakunlandi.")
+    await call.message.answer(
+        "Bosh menyuga qaytdingiz. Marhamat, bo'limlardan birini tanlang:",
+        reply_markup=get_user_reply_keyboard()
+    )
+
+@router.callback_query(F.data == "gadget_ask_again")
+async def cb_gadget_ask_again(call: CallbackQuery):
+    user_gadget_state[call.from_user.id] = True
+    await call.answer()
+    await call.message.answer(
+        "📱 Qidirayotgan yangi gadjetingiz haqida yozing (byudjet va talablar):",
+        parse_mode="HTML",
+        reply_markup=get_gadget_keyboard()
+    )
 
 @router.message(Command("status", "health"))
 async def cmd_status(message: Message, bot: Bot):
@@ -2767,6 +3084,33 @@ async def handle_incoming_messages(message: Message, bot: Bot):
     if is_admin and (raw_text.startswith("http://") or raw_text.startswith("https://")):
         status_msg = await message.answer("⏳ <i>Maqola havolasi qabul qilindi. Sahifa tahlil qilinmoqda...</i>", parse_mode="HTML")
         await create_post_from_url(raw_text, message.from_user.id, bot, status_msg)
+        return
+
+    # 2.8. Agar foydalanuvchi Gadjet Maslahatchisi holatida bo'lsa:
+    if message.from_user.id in user_gadget_state:
+        query = (message.text or "").strip()
+        if not query:
+            await message.answer("Iltimos, qidirayotgan gadjetingiz haqida yozing.")
+            return
+        if await enforce_ai_rate_limit(message, message.from_user.id):
+            return
+
+        wait_msg = await message.answer("📱 <i>Bozor tahlil qilinmoqda, eng maqbul variantlar taqqoslanmoqda...</i>", parse_mode="HTML")
+        advice = await generate_gadget_advice(query)
+        try:
+            await wait_msg.delete()
+        except Exception:
+            pass
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Boshqa gadjet so'rash", callback_data="gadget_ask_again")],
+            [InlineKeyboardButton(text="❌ Yakunlash", callback_data="user_cancel_gadget")]
+        ])
+        await message.answer(
+            f"📱 <b>NeuraTech Gadjet Maslahatchisi:</b>\n\n{advice}\n\n<i>💬 Boshqa savolingiz bo'lsa, bemalol davom ettirishingiz mumkin:</i>",
+            parse_mode="HTML",
+            reply_markup=kb
+        )
         return
 
     # 3. Agar foydalanuvchi AI Maslahatchi holatida bo'lsa (umumiy, dayjest yoki maqola bo'yicha):
