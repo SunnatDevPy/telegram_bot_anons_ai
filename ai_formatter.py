@@ -311,7 +311,7 @@ async def render_ai_stats_html() -> str:
             f"   • Holat: {m_tag}\n"
             f"   • Limit: <b>{rpd}</b> | {rpm} | {tpm}\n"
             f"   • Kontekst oynasi: <b>{ctx}</b>\n"
-            f"   • Bugun: <b>{r_td} ta so'rov</b> (<code>{t_td:,}</code> token)"
+            f"   • Bugun: <b>{r_td} ta so'rov</b> (<b>{t_td:,}</b> token)"
         )
         models_blocks.append(block)
 
@@ -321,15 +321,14 @@ async def render_ai_stats_html() -> str:
     key_lines = []
     for rep in pool_reports:
         k_idx = rep["index"]
-        masked = rep["masked"]
         k_stat = by_key.get(k_idx, {"requests_today": 0, "tokens_today": 0, "tokens_all": 0})
         st_text = rep["status"]
         tok_td = k_stat["tokens_today"]
         req_td = k_stat["requests_today"]
         tok_all = k_stat["tokens_all"]
         key_lines.append(
-            f"🔑 <b>Kalit #{k_idx}</b> (<code>{masked}</code>): {st_text}\n"
-            f"   └ Bugun: <b>{req_td} so'rov</b> (<code>{tok_td:,}</code> tok) | Jami: <code>{tok_all:,}</code> tok"
+            f"🔑 <b>Kalit #{k_idx}:</b> {st_text}\n"
+            f"   └ Bugun: <b>{req_td} so'rov</b> (<b>{tok_td:,}</b> tok) | Jami: <b>{tok_all:,}</b> tok"
         )
     keys_text = "\n".join(key_lines) if key_lines else "<i>Kalitlar topilmadi</i>"
 
@@ -347,12 +346,12 @@ async def render_ai_stats_html() -> str:
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 <b>BUGUNGI SARF:</b>\n"
         f"• 🔄 So'rovlar soni: <b>{t_req:,} ta</b>\n"
-        f"• 📥 Kiruvchi (Prompt): <code>{t_prompt:,}</code> token\n"
-        f"• 📤 Javob (Completion): <code>{t_comp:,}</code> token\n"
-        f"• ⚡ Jami bugun: <b><code>{t_total:,}</code> token</b>\n\n"
+        f"• 📥 Kiruvchi (Prompt): <b>{t_prompt:,}</b> token\n"
+        f"• 📤 Javob (Completion): <b>{t_comp:,}</b> token\n"
+        f"• ⚡ Jami bugun: <b>{t_total:,} token</b>\n\n"
         f"📈 <b>BARCHA VAQTLAR BO'YICHA:</b>\n"
         f"• 📬 Jami so'rovlar: <b>{a_req:,} ta</b>\n"
-        f"• 💎 Jami tokenlar: <b><code>{a_total:,}</code> token</b>\n"
+        f"• 💎 Jami tokenlar: <b>{a_total:,} token</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━\n"
         f"🤖 <b>AKTIV MODELLAR VA KVOTA LIMITLARI:</b>\n\n"
         f"{models_text}\n"

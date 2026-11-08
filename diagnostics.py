@@ -219,7 +219,7 @@ def format_health_html(data: Dict[str, Any]) -> str:
     keys_lines = []
     for k in data["gemini_statuses"]:
         req_info = f" [⚡️ {k.get('success', 0)} ta post]" if k.get('success', 0) > 0 else ""
-        keys_lines.append(f"  • Kalit #{k['index']} (<code>{k['masked']}</code>): {k['status']}{req_info}")
+        keys_lines.append(f"  • Kalit #{k['index']}: {k['status']}{req_info}")
     keys_text = "\n".join(keys_lines) if keys_lines else "  • Kalitlar topilmadi"
 
     text = (
