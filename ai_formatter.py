@@ -1411,3 +1411,52 @@ def get_static_ai_tools_category(cat_key: str) -> str:
         )
     }
     return catalogs.get(cat_key, catalogs["design"])
+
+# ==================== SAAS MIJOZ KANALLARI UCHUN SHAXSIY REWRITE ====================
+
+async def format_caption_for_user_channel(
+    original_title: str,
+    uz_caption: str,
+    tone: str = "standard",
+    channel_username: Optional[str] = None
+) -> str:
+    """
+    SaaS mijoz kanaliga xabarni uning tanlangan uslubi (tone) va kanali nomiga
+    moslashtirib berish. 10 xil kanalda xabarlar 1 xil ko'rinmasligi uchun
+    AI orqali uslubga moslashtiriladi.
+    """
+    watermark = f"\n\n📢 @{channel_username.lstrip('@')}" if channel_username else f"\n\n📢 {config.CHANNEL_USERNAME}"
+
+    # Standart uslub bo'lsa, mavjud captionni kanal suv belgisi bilan qaytarish (token tejash)
+    if tone == "standard":
+        clean_text = strip_source_link(uz_caption)
+        # NeuraTech belgilarini olib tashlash
+        clean_text = clean_text.replace(config.CHANNEL_USERNAME, "").replace(config.CHANNEL_LINK, "")
+        return clean_text.strip() + watermark
+
+    tone_prompts = {
+        "short": "Ushbu xabarni Telegram kanali uchun juda qisqa (3 ta asosiy punktda, 400 belgidan kam) qilib qayta yoz.",
+        "official": "Ushbu xabarni nufuzli axborot agentligi (rasmiy, jiddiy, tahliliy) uslubida qayta yoz.",
+        "humorous": "Ushbu xabarni samimiy, xalqona, o'qilishi yengil va qiziqarli uslubda qayta yoz."
+    }
+    inst = tone_prompts.get(tone, tone_prompts["short"])
+
+    prompt = f"""Sen Telegram kanali muharririsan.
+{inst}
+
+ASL MATN:
+Sarlavha: {original_title}
+Matn: {uz_caption[:1000]}
+
+TALABLAR:
+1. Toza o'zbek tilida yoz.
+2. Telegram HTML formatida bo'lsin (<b>, <i>, <code>). Hech qanday markdown ** ishlatma!
+3. Oxirida mos 2-3 ta hashtag qoldir.
+"""
+    raw = await execute_gemini_prompt(prompt)
+    if raw:
+        cleaned = clean_all_asterisks_to_html(raw.strip())
+        return cleaned + watermark
+
+    clean_text = strip_source_link(uz_caption)
+    return clean_text.strip() + watermark

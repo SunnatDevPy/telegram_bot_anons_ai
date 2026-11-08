@@ -81,6 +81,33 @@ async def init_db():
             )
         """)
 
+        # Multi-Channel SaaS jadvallari: boshqa foydalanuvchilarning ulangan kanallari
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_channels (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                owner_id INTEGER NOT NULL,
+                channel_id TEXT UNIQUE NOT NULL,
+                channel_title TEXT NOT NULL,
+                channel_username TEXT,
+                topics TEXT NOT NULL DEFAULT '["ai", "gadgets"]',
+                tone TEXT NOT NULL DEFAULT 'standard',
+                posts_per_day INTEGER NOT NULL DEFAULT 3,
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL,
+                last_posted_at TEXT
+            )
+        """)
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_channel_deliveries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_channel_id INTEGER NOT NULL,
+                post_id INTEGER NOT NULL,
+                delivered_at TEXT NOT NULL,
+                UNIQUE(user_channel_id, post_id)
+            )
+        """)
+
         # Tez-tez ishlatiladigan so'rovlar uchun indekslar (baza o'sganda sekinlashuvni oldini oladi)
         await db.execute("CREATE INDEX IF NOT EXISTS idx_posts_status ON posts(status)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_posts_scheduled ON posts(status, scheduled_at)")
@@ -88,6 +115,9 @@ async def init_db():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(status, published_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_ai_tokens_created ON ai_token_logs(created_at)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_ai_tokens_model ON ai_token_logs(model_name)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_user_channels_owner ON user_channels(owner_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_user_channels_active ON user_channels(is_active)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_deliveries_ch ON user_channel_deliveries(user_channel_id)")
 
         await db.execute(
             "INSERT OR IGNORE INTO settings (key, value) VALUES ('mode', ?)",
@@ -942,4 +972,221 @@ async def get_ai_token_stats() -> Dict[str, Any]:
         print(f"[get_ai_token_stats xatolik]: {e}")
 
     return stats
+
+# ==================== MULTI-CHANNEL SAAS TIZIMI FUNKSIYALARI ====================
+
+async def register_user_channel(
+    owner_id: int,
+    channel_id: str,
+    channel_title: str,
+    channel_username: Optional[str] = None,
+    topics: Optional[List[str]] = None,
+    posts_per_day: int = 3,
+    tone: str = "standard"
+) -> int:
+    """Mijozning shaxsiy Telegram kanalini SaaS tizimiga ulash"""
+    if topics is None:
+        topics = ["ai", "gadgets"]
+    topics_json = json.dumps(topics, ensure_ascii=False)
+    now_str = datetime.now(timezone.utc).isoformat()
+
+    async with get_db() as db:
+        await db.execute("""
+            INSERT INTO user_channels (owner_id, channel_id, channel_title, channel_username, topics, tone, posts_per_day, is_active, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+            ON CONFLICT(channel_id) DO UPDATE SET
+                owner_id=excluded.owner_id,
+                channel_title=excluded.channel_title,
+                channel_username=excluded.channel_username,
+                is_active=1
+        """, (owner_id, channel_id, channel_title, channel_username, topics_json, tone, posts_per_day, now_str))
+        await db.commit()
+
+        async with db.execute("SELECT id FROM user_channels WHERE channel_id = ?", (channel_id,)) as cur:
+            row = await cur.fetchone()
+            return int(row[0]) if row else 0
+
+async def get_user_channels(owner_id: int) -> List[Dict[str, Any]]:
+    """Muayyan foydalanuvchining ulangan barcha kanallari ro'yxati"""
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("""
+            SELECT * FROM user_channels WHERE owner_id = ? ORDER BY id DESC
+        """, (owner_id,)) as cur:
+            rows = await cur.fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                try:
+                    d["topics_list"] = json.loads(d.get("topics") or '["ai", "gadgets"]')
+                except Exception:
+                    d["topics_list"] = ["ai", "gadgets"]
+                result.append(d)
+            return result
+
+async def get_user_channel(channel_pk: int) -> Optional[Dict[str, Any]]:
+    """Kanal ID raqami (PK) bo'yicha ma'lumot olish"""
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM user_channels WHERE id = ?", (channel_pk,)) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            try:
+                d["topics_list"] = json.loads(d.get("topics") or '["ai", "gadgets"]')
+            except Exception:
+                d["topics_list"] = ["ai", "gadgets"]
+            return d
+
+async def get_user_channel_by_channel_id(channel_id: str) -> Optional[Dict[str, Any]]:
+    """Telegram Chat ID bo'yicha kanalni aniqlash"""
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM user_channels WHERE channel_id = ?", (channel_id,)) as cur:
+            row = await cur.fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            try:
+                d["topics_list"] = json.loads(d.get("topics") or '["ai", "gadgets"]')
+            except Exception:
+                d["topics_list"] = ["ai", "gadgets"]
+            return d
+
+async def update_user_channel(
+    channel_pk: int,
+    topics: Optional[List[str]] = None,
+    posts_per_day: Optional[int] = None,
+    is_active: Optional[int] = None,
+    tone: Optional[str] = None
+):
+    """Mijoz kanalining sozlamalarini yangilash"""
+    fields = []
+    values = []
+
+    if topics is not None:
+        fields.append("topics = ?")
+        values.append(json.dumps(topics, ensure_ascii=False))
+    if posts_per_day is not None:
+        fields.append("posts_per_day = ?")
+        values.append(posts_per_day)
+    if is_active is not None:
+        fields.append("is_active = ?")
+        values.append(is_active)
+    if tone is not None:
+        fields.append("tone = ?")
+        values.append(tone)
+
+    if not fields:
+        return
+
+    values.append(channel_pk)
+    query = f"UPDATE user_channels SET {', '.join(fields)} WHERE id = ?"
+
+    async with get_db() as db:
+        await db.execute(query, tuple(values))
+        await db.commit()
+
+async def delete_user_channel(channel_pk: int, owner_id: int) -> bool:
+    """Mijoz kanalini o'chirish"""
+    async with get_db() as db:
+        res = await db.execute("DELETE FROM user_channels WHERE id = ? AND owner_id = ?", (channel_pk, owner_id))
+        await db.execute("DELETE FROM user_channel_deliveries WHERE user_channel_id = ?", (channel_pk,))
+        await db.commit()
+        return res.rowcount > 0
+
+async def get_active_user_channels() -> List[Dict[str, Any]]:
+    """Fon xizmati uchun barcha faol mijoz kanallari ro'yxati"""
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM user_channels WHERE is_active = 1") as cur:
+            rows = await cur.fetchall()
+            result = []
+            for r in rows:
+                d = dict(r)
+                try:
+                    d["topics_list"] = json.loads(d.get("topics") or '["ai", "gadgets"]')
+                except Exception:
+                    d["topics_list"] = ["ai", "gadgets"]
+                result.append(d)
+            return result
+
+async def update_user_channel_last_posted(channel_pk: int):
+    """Kanalga oxirgi post yuborilgan vaqtni yangilash"""
+    now_str = datetime.now(timezone.utc).isoformat()
+    async with get_db() as db:
+        await db.execute("UPDATE user_channels SET last_posted_at = ? WHERE id = ?", (now_str, channel_pk))
+        await db.commit()
+
+async def log_channel_delivery(user_channel_id: int, post_id: int):
+    """Mijoz kanaliga post yetkazilganligini qayd etish"""
+    now_str = datetime.now(timezone.utc).isoformat()
+    async with get_db() as db:
+        await db.execute("""
+            INSERT OR IGNORE INTO user_channel_deliveries (user_channel_id, post_id, delivered_at)
+            VALUES (?, ?, ?)
+        """, (user_channel_id, post_id, now_str))
+        await db.commit()
+
+async def has_post_been_delivered(user_channel_id: int, post_id: int) -> bool:
+    """Post ushbu mijoz kanaliga allaqachon chiqarilganmi?"""
+    async with get_db() as db:
+        async with db.execute("""
+            SELECT 1 FROM user_channel_deliveries WHERE user_channel_id = ? AND post_id = ?
+        """, (user_channel_id, post_id)) as cur:
+            row = await cur.fetchone()
+            return row is not None
+
+async def get_candidate_post_for_user_channel(user_channel_id: int, topics: List[str]) -> Optional[Dict[str, Any]]:
+    """
+    Mijoz kanaliga hali yuborilmagan, tanlangan mavzularga mos eng so'nggi postni topish.
+    Asosiy kanaldan chiqqan yoki tayyor postlar orasidan tanlaydi.
+    """
+    async with get_db() as db:
+        db.row_factory = aiosqlite.Row
+        # Mavzular filtrini tuzish
+        topic_conds = []
+        for t in topics:
+            if t == "ai":
+                topic_conds.append("(title LIKE '%AI%' OR title LIKE '%Sun''iy%' OR title LIKE '%GPT%' OR title LIKE '%Claude%' OR title LIKE '%Model%' OR uz_caption LIKE '%sun''iy intellekt%')")
+            elif t == "gadgets":
+                topic_conds.append("(title LIKE '%Smartfon%' OR title LIKE '%iPhone%' OR title LIKE '%Samsung%' OR title LIKE '%Xiaomi%' OR title LIKE '%Noutbuk%' OR title LIKE '%Chip%' OR title LIKE '%RTX%')")
+            elif t == "cars":
+                topic_conds.append("(title LIKE '%Avto%' OR title LIKE '%Mashina%' OR title LIKE '%BYD%' OR title LIKE '%Tesla%' OR title LIKE '%Cobalt%' OR title LIKE '%Elektromobil%')")
+            elif t == "business":
+                topic_conds.append("(title LIKE '%Biznes%' OR title LIKE '%Startap%' OR title LIKE '%Milliard%' OR title LIKE '%Investitsiya%' OR title LIKE '%Kompaniya%')")
+            elif t == "coding":
+                topic_conds.append("(title LIKE '%Dastur%' OR title LIKE '%Kod%' OR title LIKE '%Python%' OR title LIKE '%GitHub%' OR title LIKE '%Open Source%')")
+
+        filter_clause = f"AND ({' OR '.join(topic_conds)})" if topic_conds else ""
+
+        query = f"""
+            SELECT p.*
+            FROM posts p
+            LEFT JOIN user_channel_deliveries d ON (d.post_id = p.id AND d.user_channel_id = ?)
+            WHERE d.id IS NULL
+              AND p.status = 'published'
+              {filter_clause}
+            ORDER BY p.id DESC
+            LIMIT 1
+        """
+        async with db.execute(query, (user_channel_id,)) as cur:
+            row = await cur.fetchone()
+            if row:
+                return dict(row)
+
+        # Agar maxsus mavzu bo'yicha topilmasa, istalgan oxirgi chiqarilmagan postni berish
+        fallback_query = """
+            SELECT p.*
+            FROM posts p
+            LEFT JOIN user_channel_deliveries d ON (d.post_id = p.id AND d.user_channel_id = ?)
+            WHERE d.id IS NULL
+              AND p.status = 'published'
+            ORDER BY p.id DESC
+            LIMIT 1
+        """
+        async with db.execute(fallback_query, (user_channel_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
 

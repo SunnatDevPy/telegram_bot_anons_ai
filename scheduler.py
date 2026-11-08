@@ -155,6 +155,85 @@ async def check_due_scheduled_posts(bot: Bot):
             cooldown_minutes=20
         )
 
+async def check_and_deliver_saas_channels(bot: Bot):
+    """
+    SaaS rejimida ulangan mijoz kanallariga xabarlarni tarqatish.
+    Asosiy kanalga zarracha ta'sir qilmaydi va daxlsiz qoladi.
+    """
+    active_channels = await database.get_active_user_channels()
+    if not active_channels:
+        return
+
+    now_utc = datetime.now(timezone.utc)
+
+    for ch in active_channels:
+        ch_id = ch["channel_id"]
+        posts_per_day = ch.get("posts_per_day", 3) or 3
+        interval_hours = max(1, 24 // posts_per_day)
+
+        last_posted = ch.get("last_posted_at")
+        if last_posted:
+            try:
+                dt_last = datetime.fromisoformat(last_posted)
+                if (now_utc - dt_last).total_seconds() < interval_hours * 3600:
+                    continue
+            except Exception:
+                pass
+
+        # Nomzod postni topish
+        topics = ch.get("topics_list", ["ai", "gadgets"])
+        post = await database.get_candidate_post_for_user_channel(ch["id"], topics)
+        if not post:
+            continue
+
+        # Kanal uslubiga moslab caption tayyorlash
+        tone = ch.get("tone", "standard")
+        ch_username = ch.get("channel_username")
+        custom_caption = await ai_formatter.format_caption_for_user_channel(
+            original_title=post.get("title", ""),
+            uz_caption=post.get("uz_caption", ""),
+            tone=tone,
+            channel_username=ch_username
+        )
+
+        # Xabarni mijoz kanaliga chiqarish
+        img_url = post.get("image_url")
+        delivered = False
+        try:
+            if img_url:
+                delivered = await send_media_robust(
+                    bot=bot,
+                    chat_id=ch_id,
+                    media_url=img_url,
+                    caption=custom_caption[:1024]
+                )
+            if not delivered:
+                await bot.send_message(
+                    chat_id=ch_id,
+                    text=custom_caption[:4096],
+                    parse_mode="HTML",
+                    disable_web_page_preview=True
+                )
+                delivered = True
+
+            if delivered:
+                await database.log_channel_delivery(ch["id"], post["id"])
+                await database.update_user_channel_last_posted(ch["id"])
+                print(f"[SaaS Avto-Yetkazish] Kanal #{ch['id']} ({ch.get('channel_title')}) ga Post #{post['id']} muvaffaqiyatli yetkazildi.")
+        except Exception as err:
+            err_str = str(err)
+            print(f"[SaaS Yetkazish Xatolik] Kanal {ch_id}: {err_str}")
+            if "Forbidden" in err_str or "chat not found" in err_str.lower() or "not a member" in err_str.lower():
+                await database.update_user_channel(ch["id"], is_active=0)
+                try:
+                    await bot.send_message(
+                        chat_id=ch["owner_id"],
+                        text=f"⚠️ <b>«{ch.get('channel_title')}»</b> kanalingizga post chiqarish to'xtatildi, chunki bot kanal adminligidan o'chirilgan yoki huquq berilmagan.\n\n<i>Qayta faollashtirish uchun botni kanalga admin qiling va botda faollashtiring.</i>",
+                        parse_mode="HTML"
+                    )
+                except Exception:
+                    pass
+
 async def check_daily_digest(bot: Bot, force: bool = False) -> bool:
     """Har kuni soat 21:00 da o'sha kungi eng muhim 5 ta xabar dayjestini chiqarish"""
     now_t = datetime.now(config.TASHKENT_TZ)
@@ -465,6 +544,7 @@ async def run_scheduler_worker(bot: Bot):
                     await check_due_scheduled_posts(bot)
                     await check_daily_digest(bot)
                     await check_daily_backup(bot)
+                    await check_and_deliver_saas_channels(bot)
                     # Eskirgan (4 soatdan ortiqqa cho'zilib ketgan yoki 2 soatdan ortiq kechikkan) navbatlarni avtomatik tozalash
                     max_q = getattr(config, "MAX_SCHEDULED_QUEUE", 6)
                     await database.cancel_stale_scheduled_posts(max_future_hours=4, max_overdue_hours=2, max_queue_limit=max_q)

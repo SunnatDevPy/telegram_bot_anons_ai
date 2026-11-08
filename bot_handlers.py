@@ -27,6 +27,7 @@ from ai_formatter import (
 )
 from media_helper import send_media_robust, send_user_preview_media, get_or_create_cover_for_post
 from diagnostics import get_system_health, format_health_html
+import market_prices
 
 router = Router()
 
@@ -40,10 +41,12 @@ admin_ai_tool_cache = {}      # {admin_id: dict}
 # Admin qoralama postni tahrirlash holati: {admin_id: {"post_id": int, "origin": str, "page": int}}
 admin_edit_draft_state = {}
 
-# Foydalanuvchilar qidiruv, AI maslahatchi va Gadjet yordamchisi holatlari
+# Foydalanuvchilar qidiruv, AI maslahatchi, Gadjet, Narxlar va SaaS kanal holatlari
 user_search_state = {}        # {user_id: True}
 user_ai_state = {}            # {user_id: True}
 user_gadget_state = {}        # {user_id: True}
+user_price_state = {}         # {user_id: True}
+user_connect_channel_state = {} # {user_id: True}
 
 # Admin Premium Emoji sozlash holati: {admin_id: "lightning"}
 admin_emoji_edit_state = {}
@@ -473,6 +476,7 @@ def get_user_reply_keyboard() -> ReplyKeyboardMarkup:
     """Oddiy obunachilar (mijozlar) uchun pastki menyu tugmalari"""
     kb = [
         [KeyboardButton(text="🟢 🔥 Top 10 ta AI Yangilik")],
+        [KeyboardButton(text="🚀 O'z kanalingizni ulang"), KeyboardButton(text="💰 Narxlar Radari")],
         [KeyboardButton(text="📱 Gadjet Maslahatchisi"), KeyboardButton(text="🛠 Bepul AI Asboblar")],
         [KeyboardButton(text="🔍 Qidiruv"), KeyboardButton(text="💬 AI Maslahatchi")],
         [KeyboardButton(text="⚡️ Eng so'nggi yangilik"), KeyboardButton(text="📢 Rasmiy Kanalimiz")]
@@ -837,6 +841,8 @@ async def cmd_help(message: Message):
         "📖 <b>NeuraTech AI — Yordam</b>\n\n"
         "🟢 <b>Mavjud imkoniyatlar:</b>\n"
         "• 🔥 <b>Top 10 ta AI Yangilik</b> — eng so'nggi xabarlar ro'yxati\n"
+        "• 🚀 <b>O'z kanalingizni ulang (SaaS)</b> — kanalingizga 24/7 avto-post chiqarish tizimi\n"
+        "• 💰 <b>Narxlar Radari</b> — O'zbekiston va jahon bozoridagi moshina va telefon narxlari\n"
         "• 📱 <b>Gadjet Maslahatchisi</b> — smartfon va texnika tanlash bo'yicha yordamchi\n"
         "• 🛠 <b>Bepul AI Asboblar</b> — eng sara bepul neyron tarmoqlar katalogi\n"
         "• ⚡️ <b>Eng so'nggi yangilik</b> — oxirgi e'lon qilingan post\n"
@@ -1500,6 +1506,330 @@ async def cb_gadget_ask_again(call: CallbackQuery):
         parse_mode="HTML",
         reply_markup=get_gadget_keyboard()
     )
+
+# ==================== BOZOR NARXLARI RADARI (MOSHINA & GADJETLAR) ====================
+
+def get_price_radar_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="🚗 Cobalt 2024 (Salon & Bozor)", callback_data="price_sample:Cobalt 2024 narxi"),
+            InlineKeyboardButton(text="📱 iPhone 16 Pro 128GB", callback_data="price_sample:iPhone 16 Pro 128GB narxi")
+        ],
+        [
+            InlineKeyboardButton(text="⚡️ BYD Song Plus Champion", callback_data="price_sample:BYD Song Plus Champion narxi"),
+            InlineKeyboardButton(text="📲 Samsung S24 Ultra", callback_data="price_sample:Samsung Galaxy S24 Ultra narxi")
+        ],
+        [
+            InlineKeyboardButton(text="🚙 Tracker 2 Premier", callback_data="price_sample:Chevrolet Tracker 2 narxi"),
+            InlineKeyboardButton(text="💻 MacBook Air M2 / M3", callback_data="price_sample:MacBook Air M2 narxi")
+        ],
+        [
+            InlineKeyboardButton(text="❌ Yakunlash", callback_data="user_cancel_price")
+        ]
+    ])
+
+@router.message(F.text.in_({"💰 Narxlar Radari", "Narxlar Radari", "/narx", "/price", "/prices"}))
+async def cmd_price_radar(message: Message):
+    await database.register_user(message.from_user.id, message.from_user.username, message.from_user.first_name, message.from_user.last_name)
+    user_price_state[message.from_user.id] = True
+    user_gadget_state.pop(message.from_user.id, None)
+    user_search_state.pop(message.from_user.id, None)
+    user_ai_state.pop(message.from_user.id, None)
+    user_connect_channel_state.pop(message.from_user.id, None)
+
+    text = (
+        "💰 <b>NeuraTech — O'zbekiston va Jahon Bozor Narxlari Radari</b>\n\n"
+        "Qaysi mashina, telefon yoki gadjetning narxini bilmoqchisiz?\n"
+        "Shunchaki model nomini yozing (masalan: <i>Cobalt 2024, Tracker, BYD, Gentra, iPhone 16, S24 Ultra, Redmi Note 13</i>).\n\n"
+        "Bot O'zbekiston bozoridagi (Malika, Abu Saxiy, Sergeli avtomobil bozori, salonlar va OLX) hamda xalqaro narxlarni tahlil qilib beradi ⚡️\n\n"
+        "Yoki mashhur namunalardan birini tanlang 👇"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=get_price_radar_keyboard())
+
+@router.callback_query(F.data.startswith("price_sample:"))
+async def cb_price_sample(call: CallbackQuery):
+    sample = call.data.split(":", 1)[1]
+    user_price_state[call.from_user.id] = True
+    await call.answer("Narxlar tahlil qilinmoqda... ⏳")
+    wait_msg = await call.message.answer(f"🔍 <i>«{sample}» bozor narxlari o'rganilmoqda...</i>", parse_mode="HTML")
+    report = await market_prices.get_market_price_report(sample)
+    try:
+        await wait_msg.delete()
+    except Exception:
+        pass
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Boshqa model narxini bilish", callback_data="price_ask_again")],
+        [InlineKeyboardButton(text="⬅️ Bosh menyu", callback_data="user_refresh_top")]
+    ])
+    await call.message.answer(report, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data == "user_cancel_price")
+async def cb_cancel_price(call: CallbackQuery):
+    user_price_state.pop(call.from_user.id, None)
+    await call.answer("Narxlar radari yakunlandi.")
+    await call.message.answer(
+        "Bosh menyuga qaytdingiz. Marhamat, bo'limlardan birini tanlang:",
+        reply_markup=get_user_reply_keyboard()
+    )
+
+@router.callback_query(F.data == "price_ask_again")
+async def cb_price_ask_again(call: CallbackQuery):
+    user_price_state[call.from_user.id] = True
+    await call.answer()
+    await call.message.answer(
+        "💰 Narxini bilmoqchi bo'lgan boshqa mashina yoki gadjet nomini yozing:",
+        parse_mode="HTML",
+        reply_markup=get_price_radar_keyboard()
+    )
+
+
+# ==================== MULTI-CHANNEL SAAS TIZIMI BOSHQARUVI ====================
+
+TOPIC_NAMES = {
+    "ai": "🤖 Sun'iy Intellekt",
+    "gadgets": "📱 Gadjetlar & Texnika",
+    "cars": "🚗 Avtomobillar",
+    "business": "💼 Biznes & Startaplar",
+    "coding": "💻 Dasturlash & IT"
+}
+
+def render_saas_channel_settings_text(ch: Dict[str, Any]) -> str:
+    status_icon = "🟢 Faol" if ch.get("is_active", 1) else "⏸ To'xtatilgan"
+    topics_list = ch.get("topics_list", ["ai", "gadgets"])
+    topics_str = ", ".join([TOPIC_NAMES.get(t, t) for t in topics_list]) if topics_list else "Belgilanmagan"
+    freq = ch.get("posts_per_day", 3)
+    tone = ch.get("tone", "standard")
+    tone_names = {"standard": "Standart", "short": "Qisqa (3 qator)", "official": "Rasmiy", "humorous": "Yengil / Qiziqarli"}
+    tone_str = tone_names.get(tone, "Standart")
+    u_name = f"@{ch.get('channel_username')}" if ch.get("channel_username") else "Mavjud emas"
+
+    return (
+        f"⚙️ <b>KANAL SOZLAMALARI: «{html.escape(ch.get('channel_title', ''))}»</b>\n\n"
+        f"• <b>Kanal ID:</b> <code>{ch.get('channel_id')}</code> ({u_name})\n"
+        f"• <b>Holati:</b> {status_icon}\n"
+        f"• <b>Tanlangan mavzular:</b> {topics_str}\n"
+        f"• <b>Kunlik postlar soni:</b> {freq} ta / kun\n"
+        f"• <b>Uslub (Tone of Voice):</b> {tone_str}\n\n"
+        f"<i>Quyidagi tugmalar orqali sozlamalarni o'zgartirishingiz mumkin:</i>"
+    )
+
+def get_saas_channel_settings_keyboard(ch: Dict[str, Any]) -> InlineKeyboardMarkup:
+    pk = ch["id"]
+    topics_list = ch.get("topics_list", [])
+    is_active = ch.get("is_active", 1)
+
+    topic_btns = []
+    for t_key, t_name in TOPIC_NAMES.items():
+        icon = "✅" if t_key in topics_list else "➕"
+        topic_btns.append(InlineKeyboardButton(text=f"{icon} {t_name}", callback_data=f"saas_top:{pk}:{t_key}"))
+
+    toggle_status_text = "⏸ To'xtatish" if is_active else "▶️ Faollashtirish"
+
+    kb = [
+        topic_btns[:2],
+        topic_btns[2:4],
+        topic_btns[4:],
+        [
+            InlineKeyboardButton(text="⏱ 2 ta/kun", callback_data=f"saas_freq:{pk}:2"),
+            InlineKeyboardButton(text="⏱ 4 ta/kun", callback_data=f"saas_freq:{pk}:4"),
+            InlineKeyboardButton(text="⏱ 6 ta/kun", callback_data=f"saas_freq:{pk}:6"),
+        ],
+        [
+            InlineKeyboardButton(text="🎭 Standart", callback_data=f"saas_tone:{pk}:standard"),
+            InlineKeyboardButton(text="🎭 Qisqa", callback_data=f"saas_tone:{pk}:short"),
+            InlineKeyboardButton(text="🎭 Rasmiy", callback_data=f"saas_tone:{pk}:official"),
+        ],
+        [
+            InlineKeyboardButton(text=toggle_status_text, callback_data=f"saas_toggle:{pk}"),
+            InlineKeyboardButton(text="🗑 O'chirish", callback_data=f"saas_del:{pk}")
+        ],
+        [
+            InlineKeyboardButton(text="🔙 Barcha kanallarim", callback_data="saas_my_channels")
+        ]
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+@router.message(F.text.in_({"🚀 O'z kanalingizni ulang", "/my_channels", "/saas", "O'z kanalingizni ulang"}))
+async def cmd_saas_my_channels(message: Message):
+    await database.register_user(message.from_user.id, message.from_user.username, message.from_user.first_name, message.from_user.last_name)
+    user_connect_channel_state.pop(message.from_user.id, None)
+    user_price_state.pop(message.from_user.id, None)
+    user_gadget_state.pop(message.from_user.id, None)
+    user_search_state.pop(message.from_user.id, None)
+    user_ai_state.pop(message.from_user.id, None)
+
+    channels = await database.get_user_channels(message.from_user.id)
+    if not channels:
+        text = (
+            "🚀 <b>NeuraTech Avto-Post SaaS — O'z kanalingizni ulang!</b>\n\n"
+            "Kanalingiz bormi, lekin har kuni yangilik qidirib, tarjima qilib joylashga vaqtingiz yo'qmi?\n\n"
+            "🌟 <b>SaaS imkoniyatlari:</b>\n"
+            "• Botni kanalingizga admin qilasiz;\n"
+            "• O'zingizga kerakli halol mavzularni (AI, Gadjetlar, Avto, Biznes, Dasturlash) tanlaysiz;\n"
+            "• Bot kanalingizga 24/7 avtomatik, AI orqali sifatli qayta ishlangan postlarni chiqarib turadi!\n\n"
+            "Hozirda sizda ulangan kanallar yo'q. Birinchi kanalingizni ulash uchun pastdagi tugmani bosing 👇"
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Kanal ulash (Qo'llanma)", callback_data="saas_add_channel_guide")]
+        ])
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
+        return
+
+    lines = ["📋 <b>Sizning ulangan Telegram kanallaringiz:</b>\n"]
+    kb_rows = []
+    for ch in channels:
+        st_icon = "🟢" if ch.get("is_active", 1) else "⏸"
+        title = ch.get("channel_title", "Kanal")
+        lines.append(f"{st_icon} <b>{html.escape(title)}</b> (Kuniga {ch.get('posts_per_day', 3)} ta post)")
+        kb_rows.append([InlineKeyboardButton(text=f"⚙️ Sozlash: {title[:25]}", callback_data=f"saas_edit:{ch['id']}")])
+
+    kb_rows.append([InlineKeyboardButton(text="➕ Yana yangi kanal ulash", callback_data="saas_add_channel_guide")])
+    lines.append("\n<i>Sozlamalarni o'zgartirish uchun kerakli kanalni tanlang:</i>")
+
+    await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+
+@router.callback_query(F.data == "saas_my_channels")
+async def cb_saas_my_channels(call: CallbackQuery):
+    user_connect_channel_state.pop(call.from_user.id, None)
+    channels = await database.get_user_channels(call.from_user.id)
+    if not channels:
+        text = (
+            "🚀 <b>NeuraTech Avto-Post SaaS — O'z kanalingizni ulang!</b>\n\n"
+            "Hozirda sizda ulangan kanallar mavjud emas."
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Kanal ulash (Qo'llanma)", callback_data="saas_add_channel_guide")]
+        ])
+        await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+        return
+
+    lines = ["📋 <b>Sizning ulangan Telegram kanallaringiz:</b>\n"]
+    kb_rows = []
+    for ch in channels:
+        st_icon = "🟢" if ch.get("is_active", 1) else "⏸"
+        title = ch.get("channel_title", "Kanal")
+        lines.append(f"{st_icon} <b>{html.escape(title)}</b> (Kuniga {ch.get('posts_per_day', 3)} ta post)")
+        kb_rows.append([InlineKeyboardButton(text=f"⚙️ Sozlash: {title[:25]}", callback_data=f"saas_edit:{ch['id']}")])
+
+    kb_rows.append([InlineKeyboardButton(text="➕ Yana yangi kanal ulash", callback_data="saas_add_channel_guide")])
+    lines.append("\n<i>Sozlamalarni o'zgartirish uchun kerakli kanalni tanlang:</i>")
+
+    await call.message.edit_text("\n".join(lines), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+
+@router.callback_query(F.data == "saas_add_channel_guide")
+async def cb_saas_add_channel_guide(call: CallbackQuery):
+    user_connect_channel_state[call.from_user.id] = True
+    await call.answer()
+    text = (
+        "➕ <b>Kanalni ulash bo'yicha oddiy 2 ta qadam:</b>\n\n"
+        f"1️⃣ Ushbu botni (<b>@{config.BOT_USERNAME}</b>) o'z kanalingizga <b>Admin</b> qilib qo'shing "
+        "(<i>«Xabarlarni chop etish» huquqi yoqilgan bo'lsin</i>).\n\n"
+        "2️⃣ So'ngra kanalingiz manzilini yuboring (masalan: <code>@kanalingiz_nomi</code>)\n"
+        "<i>yoki kanalingizdagi istalgan bitta xabarni ushbu botga uzating (forward qiling).</i>\n\n"
+        "Bot darhol admin huquqini tekshiradi va kanalingizni tizimga ulaydi! ⚡️"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="❌ Bekor qilish", callback_data="saas_my_channels")]
+    ])
+    await call.message.answer(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data.startswith("saas_edit:"))
+async def cb_saas_edit_channel(call: CallbackQuery):
+    pk = int(call.data.split(":")[1])
+    ch = await database.get_user_channel(pk)
+    if not ch or ch.get("owner_id") != call.from_user.id:
+        await call.answer("Kanal topilmadi!", show_alert=True)
+        return
+
+    text = render_saas_channel_settings_text(ch)
+    kb = get_saas_channel_settings_keyboard(ch)
+    await call.message.edit_text(text, parse_mode="HTML", reply_markup=kb)
+
+@router.callback_query(F.data.startswith("saas_top:"))
+async def cb_saas_toggle_topic(call: CallbackQuery):
+    _, pk_str, t_key = call.data.split(":")
+    pk = int(pk_str)
+    ch = await database.get_user_channel(pk)
+    if not ch or ch.get("owner_id") != call.from_user.id:
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    cur_topics = list(ch.get("topics_list", []))
+    if t_key in cur_topics:
+        if len(cur_topics) > 1:
+            cur_topics.remove(t_key)
+        else:
+            await call.answer("Kamida bitta mavzu tanlangan bo'lishi shart!", show_alert=True)
+            return
+    else:
+        cur_topics.append(t_key)
+
+    await database.update_user_channel(pk, topics=cur_topics)
+    ch = await database.get_user_channel(pk)
+    await call.answer("Mavzular yangilandi ✅")
+    await call.message.edit_text(render_saas_channel_settings_text(ch), parse_mode="HTML", reply_markup=get_saas_channel_settings_keyboard(ch))
+
+@router.callback_query(F.data.startswith("saas_freq:"))
+async def cb_saas_set_freq(call: CallbackQuery):
+    _, pk_str, freq_str = call.data.split(":")
+    pk = int(pk_str)
+    freq = int(freq_str)
+    await database.update_user_channel(pk, posts_per_day=freq)
+    ch = await database.get_user_channel(pk)
+    await call.answer(f"Kunlik postlar soni: {freq} ta qilib belgilandi ✅")
+    await call.message.edit_text(render_saas_channel_settings_text(ch), parse_mode="HTML", reply_markup=get_saas_channel_settings_keyboard(ch))
+
+@router.callback_query(F.data.startswith("saas_tone:"))
+async def cb_saas_set_tone(call: CallbackQuery):
+    _, pk_str, tone = call.data.split(":")
+    pk = int(pk_str)
+    await database.update_user_channel(pk, tone=tone)
+    ch = await database.get_user_channel(pk)
+    await call.answer(f"Postlar uslubi yangilandi: {tone} ✅")
+    await call.message.edit_text(render_saas_channel_settings_text(ch), parse_mode="HTML", reply_markup=get_saas_channel_settings_keyboard(ch))
+
+@router.callback_query(F.data.startswith("saas_toggle:"))
+async def cb_saas_toggle_active(call: CallbackQuery):
+    pk = int(call.data.split(":")[1])
+    ch = await database.get_user_channel(pk)
+    if not ch or ch.get("owner_id") != call.from_user.id:
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    new_status = 0 if ch.get("is_active", 1) else 1
+    await database.update_user_channel(pk, is_active=new_status)
+    ch = await database.get_user_channel(pk)
+    st_msg = "Kanal faollashtirildi ▶️" if new_status else "Kanal to'xtatildi ⏸"
+    await call.answer(st_msg)
+    await call.message.edit_text(render_saas_channel_settings_text(ch), parse_mode="HTML", reply_markup=get_saas_channel_settings_keyboard(ch))
+
+@router.callback_query(F.data.startswith("saas_del:"))
+async def cb_saas_del_channel(call: CallbackQuery):
+    pk = int(call.data.split(":")[1])
+    ch = await database.get_user_channel(pk)
+    if not ch or ch.get("owner_id") != call.from_user.id:
+        await call.answer("Ruxsat yo'q!", show_alert=True)
+        return
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🗑 Ha, o'chirilsin", callback_data=f"saas_confirm_del:{pk}")],
+        [InlineKeyboardButton(text="🔙 Bekor qilish", callback_data=f"saas_edit:{pk}")]
+    ])
+    await call.message.edit_text(
+        f"❓ <b>Haqiqatdan ham «{html.escape(ch.get('channel_title'))}» kanalini tizimdan o'chirmoqchimisiz?</b>",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
+
+@router.callback_query(F.data.startswith("saas_confirm_del:"))
+async def cb_saas_confirm_del(call: CallbackQuery):
+    pk = int(call.data.split(":")[1])
+    success = await database.delete_user_channel(pk, call.from_user.id)
+    if success:
+        await call.answer("Kanal tizimdan o'chirildi ✅")
+    else:
+        await call.answer("Kanal topilmadi!", show_alert=True)
+    await cb_saas_my_channels(call)
 
 @router.message(Command("status", "health"))
 async def cmd_status(message: Message, bot: Bot):
@@ -3111,6 +3441,94 @@ async def handle_incoming_messages(message: Message, bot: Bot):
             parse_mode="HTML",
             reply_markup=kb
         )
+        return
+
+    # 2.9. Agar foydalanuvchi Narxlar Radari holatida bo'lsa:
+    if message.from_user.id in user_price_state:
+        query = (message.text or "").strip()
+        if not query:
+            await message.answer("Iltimos, narxini bilmoqchi bo'lgan mashina yoki gadjet nomini yozing.")
+            return
+        if await enforce_ai_rate_limit(message, message.from_user.id):
+            return
+
+        wait_msg = await message.answer(f"🔍 <i>«{query}» bo'yicha O'zbekiston va jahon bozor narxlari tahlil qilinmoqda...</i>", parse_mode="HTML")
+        report = await market_prices.get_market_price_report(query)
+        try:
+            await wait_msg.delete()
+        except Exception:
+            pass
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔄 Boshqa model narxini bilish", callback_data="price_ask_again")],
+            [InlineKeyboardButton(text="⬅️ Bosh menyu", callback_data="user_refresh_top")]
+        ])
+        await message.answer(report, parse_mode="HTML", reply_markup=kb)
+        return
+
+    # 2.10. Agar foydalanuvchi SaaS orqali yangi kanal ulayotgan bo'lsa:
+    if message.from_user.id in user_connect_channel_state:
+        target_chat = None
+        if message.forward_from_chat and message.forward_from_chat.type == "channel":
+            target_chat = message.forward_from_chat
+        elif message.text:
+            raw_target = message.text.strip().replace("https://t.me/", "").replace("t.me/", "")
+            if not raw_target.startswith("@") and not raw_target.startswith("-100") and not raw_target.isdigit():
+                raw_target = "@" + raw_target
+            try:
+                target_chat = await bot.get_chat(raw_target)
+            except Exception as e:
+                await message.answer(
+                    f"❌ <b>Kanal topilmadi:</b> {html.escape(raw_target)}\n\n"
+                    f"Iltimos, bot (<b>@{config.BOT_USERNAME}</b>) kanalingizga <b>Admin</b> qilinganligiga ishonch hosil qiling va kanal username-ni to'g'ri yuboring (masalan: <code>@kanalingiz</code>).\n"
+                    f"Yoki kanaldagi istalgan xabarni botga forward qiling.",
+                    parse_mode="HTML"
+                )
+                return
+
+        if not target_chat:
+            await message.answer("Iltimos, kanal username-ni yuboring (masalan: <code>@kanalingiz</code>) yoki kanaldagi xabarni forward qiling.", parse_mode="HTML")
+            return
+
+        # Bot ushbu kanalda adminmi tekshirish
+        try:
+            bot_info = await bot.get_me()
+            bot_member = await bot.get_chat_member(target_chat.id, bot_info.id)
+            if bot_member.status not in ("administrator", "creator"):
+                await message.answer(
+                    f"⚠️ <b>«{html.escape(target_chat.title or '')}»</b> kanalida bot admin emas!\n\n"
+                    f"Iltimos, avval <b>@{config.BOT_USERNAME}</b> ni kanalingizga Admin qilib qo'shing (Xabarlarni chop etish huquqi bilan), so'ngra qayta yuboring.",
+                    parse_mode="HTML"
+                )
+                return
+        except Exception as perm_err:
+            await message.answer(
+                f"❌ <b>Kanal huquqlarini tekshirishda xatolik:</b>\n<code>{html.escape(str(perm_err))}</code>\n\n"
+                f"Botni kanalga admin qilganingizga ishonch hosil qiling.",
+                parse_mode="HTML"
+            )
+            return
+
+        ch_pk = await database.register_user_channel(
+            owner_id=message.from_user.id,
+            channel_id=str(target_chat.id),
+            channel_title=target_chat.title or "Noma'lum kanal",
+            channel_username=target_chat.username,
+            topics=["ai", "gadgets"],
+            posts_per_day=3,
+            tone="standard"
+        )
+        user_connect_channel_state.pop(message.from_user.id, None)
+
+        ch_data = await database.get_user_channel(ch_pk)
+        text = (
+            f"🎉 <b>Tabriklaymiz! Kanalingiz muvaffaqiyatli ulandi!</b>\n\n"
+            f"📢 <b>Kanal:</b> {html.escape(target_chat.title or '')} (<code>{target_chat.id}</code>)\n"
+            f"Endi bot sizning kanalingizga avtomatik ravishda sara va halol xabarlarni chiqarib boradi.\n\n"
+            f"Pastdagi menyu orqali qaysi mavzular (AI, Gadjetlar, Avto, Biznes, Dasturlash) chiqishi kerakligini sozlab oling 👇"
+        )
+        kb = get_saas_channel_settings_keyboard(ch_data)
+        await message.answer(text, parse_mode="HTML", reply_markup=kb)
         return
 
     # 3. Agar foydalanuvchi AI Maslahatchi holatida bo'lsa (umumiy, dayjest yoki maqola bo'yicha):
